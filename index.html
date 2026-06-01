@@ -18,6 +18,8 @@
   z-index: 1000; /* ✅ ABOVE FLASH */
 }
 
+
+
 #flashOverlay {
   position: absolute;
   left: 0;
@@ -89,7 +91,7 @@
       border-radius: 18px;
       box-shadow: 0 0 22px rgba(0,212,255,0.16);
       padding: 12px;
-  z-index: 10;
+  z-index: 2000;
     }
 
     #title { margin:0 0 6px 0; font-size:22px; font-weight:900; letter-spacing:0.2px; }
@@ -153,6 +155,14 @@
 }
 
 .hidden { display:none !important; }
+ .relicPerkGlow {
+  animation: relicPulse 1.6s ease-in-out infinite;
+ }
+ @keyframes relicPulse {
+  0%   { box-shadow: 0 0 6px rgba(255,212,0,0.18), 0 0 10px rgba(255,212,0,0.08); }
+  50%  { box-shadow: 0 0 12px rgba(255,212,0,0.42), 0 0 18px rgba(255,212,0,0.18); }
+  100% { box-shadow: 0 0 6px rgba(255,212,0,0.18), 0 0 10px rgba(255,212,0,0.08); }
+ }
 .hideInPerk {
   display: none;
 }
@@ -166,6 +176,38 @@
 ========================================================= -->
 <div id="app">
   <canvas id="c" width="600" height="600"></canvas>
+
+<div id="mapNodePanel" style="
+  position:fixed;
+  top:80px;
+  left:380px;
+  width:200px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  z-index:5000;
+  pointer-events:none;
+  background:rgba(0,0,0,0.75);
+  border:2px solid #00ffcc;
+  border-radius:12px;
+  padding:6px;
+">
+  <div id="mapNodeTypeBox" style="
+    padding:10px;
+    background:rgba(0,80,120,0.9);
+    color:white;
+  "></div>
+
+  <div id="mapNodeRelicBox" style="
+    padding:10px;
+    background:rgba(120,80,0,0.9);
+    color:white;
+  "></div>
+</div>
+
+<div id="flashOverlay"></div>
+<div id="topUI"></div>
+
 
 <div id="flashOverlay"></div>
 <div id="topUI"></div>
@@ -239,10 +281,6 @@
   <!-- ✅ MOVE THIS OUTSIDE debugRow -->
   <div id="relicPanel" class="hidden" style="margin-top:8px; padding:10px 12px; border-radius:14px; background:rgba(28,30,33,0.92); border:1px solid rgba(255,212,0,0.25); font-size:14px; line-height:1.4;"></div>
 
-<div id="mapNodePanel" class="hidden" style="position:absolute; top:70px; right:16px; width:190px; display:flex; flex-direction:column; gap:8px; z-index:1200;">
-  <div id="mapNodeTypeBox" style="padding:10px 12px; border-radius:14px; background:rgba(28,30,33,0.92); border:1px solid rgba(0,212,255,0.25); font-size:14px; line-height:1.4;"></div>
-  <div id="mapNodeRelicBox" style="padding:10px 12px; border-radius:14px; background:rgba(28,30,33,0.92); border:1px solid rgba(255,212,0,0.25); font-size:14px; line-height:1.4;"></div>
-</div>
 
 <div class="row hidden" id="pauseRow">
     <button id="btnResume" class="focusable">Resume</button>
@@ -1160,6 +1198,8 @@ const PERK_STAT_MULT = {
 // ✅ EXPLOSION DAMAGE SYSTEM
 // =====================================
 let explosionDamageMultiplier = 2.0; // ✅ DEFAULT = 2x
+let explosionRadiusMultiplier = 1.0;
+const BUILD_VERSION = 'v.0007';
 
 // =====================================
 // ✅ BASE PERK VALUES
@@ -1639,7 +1679,7 @@ playerRelicState.shotCounter++;
  twin: twinMode,
  sourceLane: firedLane,
  explosiveOnImpact: hasRelic('last_chamber') && lastShot,
- explosionRadius: 150,
+ explosionRadius: 150 * explosionRadiusMultiplier,
  explosionDamage: baseDamage * explosionDamageMultiplier
  }
   });
@@ -1852,12 +1892,12 @@ function makePerk({ id, name, rarity, stat }) {
    ✅ RELIC POOL
 ========================================================= */
 let RELIC_POOL = [
-  makeRelic({ id: 'twin_emitter', name: 'Twin Emitter', desc: 'Each shot fires two close rounds.' }),
-  makeRelic({ id: 'last_chamber', name: 'Last Chamber', desc: 'Final bullet in the mag deals double damage.' }),
-  makeRelic({ id: 'salvage_net', name: 'Salvage Net', desc: 'Gems collected after passing the player are worth 3x.' }),
-  makeRelic({ id: 'boomerang_chamber', name: 'Boomerang Chamber', desc: 'Bullets return in a lane beside the fired lane.' }),
-  makeRelic({ id: 'crossfire_relay', name: 'Crossfire Relay', desc: 'Every 5th shot also fires two side rounds.' }),
-  makeRelic({ id: 'piercing_rounds', name: 'Armor Piercing', desc: 'Bullets pierce through 1 enemy before breaking.' })
+  makeRelic({ id: 'twin_emitter', name: '✨ Twin Emitter ✨', desc: 'Each shot fires two close rounds.' }),
+  makeRelic({ id: 'last_chamber', name: '✨ Last Chamber ✨', desc: 'Final bullet in the mag deals double damage.' }),
+  makeRelic({ id: 'salvage_net', name: '✨ Salvage Net ✨', desc: 'Gems collected after passing the player are worth 3x.' }),
+  makeRelic({ id: 'boomerang_chamber', name: '✨ Boomerang Chamber ✨', desc: 'Bullets return in a lane beside the fired lane.' }),
+  makeRelic({ id: 'crossfire_relay', name: '✨ Crossfire Relay ✨', desc: 'Every 5th shot also fires two side rounds.' }),
+  makeRelic({ id: 'piercing_rounds', name: '✨ Armor Piercing ✨', desc: 'Bullets pierce through 1 enemy before breaking.' })
 ];
 
 // =====================================
@@ -1925,6 +1965,15 @@ let availablePerks = [
   makePerk({ id:'pickup_epic',       name:'Attractor Core',   rarity:'epic',      stat:'pickup' }),
   makePerk({ id:'pickup_legendary',  name:'Singularity Field',rarity:'legendary', stat:'pickup' }),
 
+makePerk({
+ id:'volatile_payload',
+ name:'Volatile Payload',
+ rarity:'epic',
+ stat:null,
+ requiresRelic:'last_chamber',
+ desc:()=>'+50% Explosion Radius',
+ apply:()=>{ explosionRadiusMultiplier+=0.5; }
+})
 ];
 
 
@@ -1988,6 +2037,7 @@ function getPerksByRarity(rarity){
 
 
 function generatePerkChoices(count = 3){
+ const filteredPerks = availablePerks.filter(p=>{ if(!p.requiresRelic) return true; return hasRelic(p.requiresRelic); });
   activePerkChoices = [];
 
   // We'll try to avoid duplicates when possible
@@ -1999,7 +2049,7 @@ function generatePerkChoices(count = 3){
     const rarity = rollRarity();
 
     // 2) pick from that rarity pool
-    let pool = getPerksByRarity(rarity);
+    let pool = filteredPerks.filter(p=>p.rarity===rarity);
 
     // remove already-used perks if possible
     const filtered = pool.filter(p => !usedIds.has(p.id));
@@ -2007,7 +2057,7 @@ function generatePerkChoices(count = 3){
 
     // fallback if pool empty (e.g., you don't have epic perks yet)
     if (!pool.length) {
-      const fallback = availablePerks.filter(p => !usedIds.has(p.id));
+      const fallback = filteredPerks.filter(p => !usedIds.has(p.id));
       const finalPool = fallback.length ? fallback : availablePerks;
       const pick = finalPool[Math.floor(Math.random() * finalPool.length)];
       activePerkChoices.push(pick);
@@ -2045,7 +2095,7 @@ function pickPerk(index){
       return;
     }
 
-    if (old.remove) old.remove();
+    if (old.remove) old.remove(); if (old.id==='last_chamber'){ explosionRadiusMultiplier=1.0; }
     relics[index] = relicReplaceCandidate;
     if (relicReplaceCandidate && relicReplaceCandidate.apply) {
       relicReplaceCandidate.apply();
@@ -2111,28 +2161,60 @@ function rerollPerks(){
    ✅ PERK / RELIC UI RENDERING
 ========================================================= */
 function renderPerkUI(){
-  const slots = [ui.perk1, ui.perk2, ui.perk3];
-  slots.forEach(s => { s.classList.remove('hidden'); s.disabled = false; });
-  for (let i = 0; i < slots.length; i++) {
-    const p = activePerkChoices[i];
-    if (!p) continue;
-    let color = '#dddddd';
-    if (p.rarity === 'uncommon') color = '#4cff4c';
-    if (p.rarity === 'rare') color = '#66ccff';
-    if (p.rarity === 'epic') color = '#b84cff';
-    if (p.rarity === 'legendary') color = '#ff9933';
-    slots[i].style.borderColor = color;
-    slots[i].style.boxShadow = (p.rarity !== 'common') ? `0 0 6px ${color}` : '';
-    slots[i].innerHTML = `
-      <div style="text-align:center;">
-        <div>${p.name}</div>
-        <div style="font-size:14px; opacity:0.7;">${typeof p.desc === 'function' ? p.desc() : p.desc}</div>
-        <div style="font-size:12px; color:${color};">${p.rarity.toUpperCase()}</div>
-      </div>`;
-    slots[i].onfocus = () => highlightPerkPreview(p);
-  }
-}
+ const slots = [ui.perk1, ui.perk2, ui.perk3];
 
+ slots.forEach(s => {
+  s.classList.remove('hidden');
+  s.disabled = false;
+  s.classList.remove('relicPerkGlow');
+ });
+
+ for (let i = 0; i < slots.length; i++) {
+  const p = activePerkChoices[i];
+  if (!p) continue;
+
+  let color = '#dddddd';
+  if (p.rarity === 'uncommon') color = '#4cff4c';
+  if (p.rarity === 'rare') color = '#66ccff';
+  if (p.rarity === 'epic') color = '#b84cff';
+  if (p.rarity === 'legendary') color = '#ff9933';
+
+  const isRelicPerk = !!p.requiresRelic;
+  const sourceRelic = isRelicPerk ? relics.find(r => r.id === p.requiresRelic) : null;
+  const perkDesc = (typeof p.desc === 'function' ? p.desc() : p.desc) || '';
+
+  const relicYellow = '#ffd400';
+  const textColor = isRelicPerk ? relicYellow : '#ffffff';
+  const metaColor = isRelicPerk ? relicYellow : color;
+
+  slots[i].style.borderColor = isRelicPerk ? relicYellow : color;
+
+  if (isRelicPerk) {
+    slots[i].classList.add('relicPerkGlow');
+    slots[i].style.boxShadow = '';
+  } else {
+    slots[i].style.boxShadow = (p.rarity !== 'common') 
+      ? `0 0 6px ${color}` 
+      : '';
+  }
+
+  const perkName = isRelicPerk ? ('◆ ' + p.name + ' ◆') : p.name;
+  const relicLine = isRelicPerk 
+    ? ('◆ ' + (sourceRelic ? sourceRelic.name : 'Relic') + ' ◆') 
+    : '';
+  const footerLine = isRelicPerk ? 'RELIC SYNERGY' : p.rarity.toUpperCase();
+
+  slots[i].innerHTML = `
+   <div style="text-align:center; color:${textColor};">
+    <div>${perkName}</div>
+    <div style="font-size:14px; opacity:0.95; color:${textColor};">${perkDesc}</div>
+    ${isRelicPerk ? `<div style="font-size:12px; margin-top:4px; color:${relicYellow};">${relicLine}</div>` : ''}
+    <div style="font-size:12px; margin-top:4px; color:${metaColor};">${footerLine}</div>
+   </div>`;
+
+  slots[i].onfocus = () => highlightPerkPreview(p);
+ }
+}
 
 function renderRelicUI() {
   const slots = [ui.perk1, ui.perk2, ui.perk3];
@@ -3471,6 +3553,18 @@ let mapCursorX = 0;
 let mapCursorY = 0;
 let mapCursorTargetX = 0;
 let mapCursorTargetY = 0;
+let mapUIDebug = {
+  lastRenderStatus: 'init',
+  panelDisplay: 'unknown',
+  nodeId: 'none',
+  typeBoxConnected: false,
+  relicBoxConnected: false
+};
+function syncMapPanelRefs(){
+  ui.mapNodePanel = document.getElementById('mapNodePanel');
+  ui.mapNodeTypeBox = document.getElementById('mapNodeTypeBox');
+  ui.mapNodeRelicBox = document.getElementById('mapNodeRelicBox');
+}
 
 function createMapNode(id, row, col, type = 'combat') {
   const node = {
@@ -3716,6 +3810,10 @@ function enterMapMode() {
 
   setMode('map');
   renderMapNodePreview();
+if (mapReachableNodeIds.length) {
+  setMapPreview(mapReachableNodeIds[0]);
+}
+
 }
 
 
@@ -3943,40 +4041,79 @@ if (e.key === DPAD.SELECT) {
 
 
 function renderMapNodePreview() {
-  if (!ui.mapNodePanel || mode !== 'map') {
-    if (ui.mapNodePanel) { ui.mapNodePanel.style.display='none'; ui.mapNodePanel.style.display = 'none'; }
+  syncMapPanelRefs();
+
+  mapUIDebug.typeBoxConnected = !!ui.mapNodeTypeBox && document.body.contains(ui.mapNodeTypeBox);
+  mapUIDebug.relicBoxConnected = !!ui.mapNodeRelicBox && document.body.contains(ui.mapNodeRelicBox);
+
+  if (!ui.mapNodePanel || !ui.mapNodeTypeBox || !ui.mapNodeRelicBox) {
+    mapUIDebug.lastRenderStatus = 'missing panel refs';
     return;
   }
 
-  const node = mapNodeLookup[mapPreviewNodeId || mapCurrentNodeId];
-  if (!node || node.id === 'start') {
-    ui.mapNodePanel.style.display='none';
+  if (mode !== 'map') {
+    ui.mapNodePanel.style.display = 'none';
+    mapUIDebug.panelDisplay = 'none';
+    mapUIDebug.lastRenderStatus = 'hidden (not map mode)';
+    return;
+  }
+
+  ui.mapNodePanel.style.display = 'flex';
+  mapUIDebug.panelDisplay = 'flex';
+
+const nodeId = mapPreviewNodeId || mapCurrentNodeId;
+  const node = mapNodeLookup[nodeId];
+  mapUIDebug.nodeId = String(nodeId);
+
+  if (!node) {
+    ui.mapNodeTypeBox.innerHTML = '<div style="color:#ff6666; font-weight:800;">ERROR</div><div>No node found</div>';
+    ui.mapNodeRelicBox.innerHTML = '<div style="color:#ff6666;">Node lookup failed</div>';
+    mapUIDebug.lastRenderStatus = 'no node';
+    return;
+  }
+
+  if (node.id === 'start') {
+    ui.mapNodeTypeBox.innerHTML = `
+      <div style="color:#66ccff; font-weight:800; margin-bottom:6px;">START</div>
+      <div>Press ENTER to begin</div>
+    `;
+
+    ui.mapNodeRelicBox.innerHTML = `
+      <div style="color:#ffd400; font-weight:800; margin-bottom:6px;">MAP STATUS</div>
+      <div>No node selected yet</div>
+      <div style="opacity:0.75; margin-top:6px;">Reachable nodes unlock after confirming the start node.</div>
+    `;
+
+    mapUIDebug.lastRenderStatus = 'rendered start';
     return;
   }
 
   const type = node.data?.resolvedType || node.type || 'unknown';
   const displayType = String(type).replace(/_/g, ' ');
   const relic = node.data?.relicPreview;
-  const challenge = Array.isArray(node.data?.challenges) && node.data.challenges.length ? node.data.challenges[0] : null;
+  const challenge = Array.isArray(node.data?.challenges) && node.data.challenges.length
+    ? node.data.challenges[0]
+    : null;
 
   ui.mapNodeTypeBox.innerHTML = `
     <div style="color:#66ccff; font-weight:800; margin-bottom:6px;">Node</div>
     <div>Type: <strong>${displayType}</strong></div>
+    <div style="opacity:0.75; margin-top:6px;">ID: ${node.id}</div>
   `;
 
   ui.mapNodeRelicBox.innerHTML = `
     <div style="color:#ffd400; font-weight:800; margin-bottom:6px;">Relic Reward</div>
     <div><strong>${relic ? relic.name : 'Unknown'}</strong></div>
-    <div style="opacity:0.8; margin:4px 0 8px 0;">${relic ? relic.desc : 'No relic preview available.'}</div>
+    <div style="opacity:0.8; margin:4px 0 8px 0;">
+      ${relic ? (typeof relic.desc === 'function' ? relic.desc() : relic.desc) : 'No relic preview'}
+    </div>
     <div style="color:#ffffff; font-weight:700; margin-bottom:4px;">Condition</div>
-    <div>${challenge ? challenge.desc : 'No challenge'}</div>
+    <div>${challenge ? (typeof challenge.desc === 'function' ? challenge.desc() : challenge.desc) : 'No challenge'}</div>
   `;
 
-  ui.mapNodePanel.style.display='flex';
- ui.mapNodePanel.style.display = 'flex';
+  mapUIDebug.lastRenderStatus = 'rendered node ' + node.id;
 }
 
-// ✅ DRAW MAP
 function drawMap() {
   ctx.save();
 
@@ -4167,12 +4304,17 @@ ctx.textAlign = 'left';
 
 const debugNode = mapNodeLookup[mapPreviewNodeId || mapCurrentNodeId];
 if (debugNode) {
-  ctx.fillText('node: ' + debugNode.id, 10, 540);
-  ctx.fillText('base type: ' + debugNode.type, 10, 555);
-  ctx.fillText('resolved type: ' + String(debugNode.data?.resolvedType), 10, 570);
-  ctx.fillText('resolved level: ' + String(debugNode.data?.resolvedLevel), 10, 585);
+ ctx.fillText('panel exists: ' + !!ui.mapNodePanel, 10, 465);
+ ctx.fillText('typeBox exists: ' + !!ui.mapNodeTypeBox, 10, 480);
+ ctx.fillText('relicBox exists: ' + !!ui.mapNodeRelicBox, 10, 495);
+ ctx.fillText('typeBox connected: ' + mapUIDebug.typeBoxConnected, 10, 510);
+ ctx.fillText('relicBox connected: ' + mapUIDebug.relicBoxConnected, 10, 525);
+ ctx.fillText('panel display: ' + mapUIDebug.panelDisplay, 10, 540);
+ ctx.fillText('render status: ' + mapUIDebug.lastRenderStatus, 10, 555);
+ ctx.fillText('node: ' + debugNode.id, 10, 570);
+ ctx.fillText('base type: ' + debugNode.type, 10, 585);
 }
-  ctx.restore();
+ctx.restore();
 }
 /* =========================================================
    ✅ RENDER SYSTEM (WITH ONSCREEN ERROR DISPLAY)
@@ -4278,6 +4420,16 @@ function updateStars(dt){
 
 
 
+
+
+function drawVersionOverlay(){
+ ctx.save();
+ ctx.fillStyle = '#ffff66';
+ ctx.font = '12px monospace';
+ ctx.textAlign = 'right';
+ ctx.fillText(BUILD_VERSION, 590, 590);
+ ctx.restore();
+}
 
 function draw(){
   ctx.clearRect(0, 0, 600, 600);
@@ -5286,7 +5438,7 @@ else {
   ui.perkRow.classList.add('hidden');
   ui.btnReroll.classList.add('hidden');
   if (ui.relicPanel) ui.relicPanel.classList.add('hidden');
-  if (ui.mapNodePanel) { ui.mapNodePanel.style.display='none'; ui.mapNodePanel.style.display = 'none'; }
+if (ui.mapNodePanel && nextMode !== 'map') { ui.mapNodePanel.style.display = 'none'; }
 
 // ✅ NEVER show title/subtitle anymore
 document.getElementById('title').classList.add('hideInPerk');
@@ -5296,8 +5448,7 @@ document.getElementById('subtitle').classList.add('hideInPerk');
   // ----- MODE ROUTES -----
   if (nextMode === 'map') {
     ui.panel.classList.add('hidden');
-    if (ui.mapNodePanel) { ui.mapNodePanel.style.display='flex';
- ui.mapNodePanel.style.display = 'flex'; ui.mapNodePanel.style.display = 'flex'; renderMapNodePreview(); }
+    if (ui.mapNodePanel) { ui.mapNodePanel.style.display = 'flex'; renderMapNodePreview(); }
     return;
   }
 
@@ -6077,7 +6228,8 @@ const LEVELS = {
 a_debug_pawn_test: {
   type: 'elite',
   objective: 'survive_timer',
-  duration: 120,
+  duration: 3,
+//120
 
   setup: () => {
     clearAllEntities();
@@ -6623,8 +6775,14 @@ updatePawns(dt);
     completeActiveLevel();
     refreshStatUI();
     renderTopUI();
-    draw();
-    requestAnimationFrame(update);
+    draw(); drawVersionOverlay();
+    
+if (mode==='map'){
+ const test = document.getElementById('mapDebugPanel');
+ if(test){ test.style.display='block'; }
+}
+
+requestAnimationFrame(update);
     return;
   }
 }
@@ -6632,13 +6790,13 @@ updatePawns(dt);
     // ✅ UI + DRAW
     refreshStatUI();
     renderTopUI();
-    draw();
+    draw(); drawVersionOverlay();
 
   } catch (err) {
     lastRuntimeError = (err && err.message) ? err.message : String(err);
     console.error("Game error:", err);
 
-    try { draw(); } catch(e) {}
+    try { draw(); drawVersionOverlay(); } catch(e) {}
   }
 
   requestAnimationFrame(update);
