@@ -161,6 +161,9 @@
 </head>
 
 <body>
+<!-- =========================================================
+     ✅ APP SHELL / HUD / PANELS
+========================================================= -->
 <div id="app">
   <canvas id="c" width="600" height="600"></canvas>
 
@@ -189,6 +192,7 @@
     <div class="pill">Reload <strong id="rt">0</strong></div>
 
     <div class="pill">Bullet Velocity <strong id="bs">0</strong></div>
+<div class="pill">Damage <strong id="dmg">0</strong></div>
     <div class="pill">Capacity <strong id="bc">0</strong></div>
 <div class="pill">Luck <strong id="luck">0</strong></div>
 <div class="pill">Pickup Radius <strong id="pr">0</strong></div>
@@ -210,16 +214,37 @@
     <button id="btnDebug" class="focusable">Debug Mode</button>
   </div>
 
+
 <div class="row hidden" id="debugRow" style="flex-direction: column;">
-
-  <select id="debugLevelSelect" class="focusable debugSelect"></select>
-
-  <button id="btnDbgLaunch" class="focusable">Launch</button>
-  <button id="btnDbgBack" class="focusable">Back</button>
+<div id="debugRelicSection" style="margin-bottom:10px;">
+  <div style="color:#ffd400; font-weight:800; margin-bottom:6px;">Relics</div>
+  <select id="debugRelicSelect" class="focusable debugSelect"></select>
+  <div id="debugRelicChosen" style="
+    margin-top:6px;
+    padding:8px 10px;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,212,0,0.18);
+    border-radius:8px;
+    font-size:12px;
+    line-height:1.45;
+    min-height:40px;
+  ">None Selected</div>
+</div>
+ <select id="debugLevelSelect" class="focusable debugSelect"></select>
+ <button id="btnDbgLaunch" class="focusable">Launch</button>
+ <button id="btnDbgBack" class="focusable">Back</button>
 </div>
 
+
   <!-- ✅ MOVE THIS OUTSIDE debugRow -->
-  <div class="row hidden" id="pauseRow">
+  <div id="relicPanel" class="hidden" style="margin-top:8px; padding:10px 12px; border-radius:14px; background:rgba(28,30,33,0.92); border:1px solid rgba(255,212,0,0.25); font-size:14px; line-height:1.4;"></div>
+
+<div id="mapNodePanel" class="hidden" style="position:absolute; top:70px; right:16px; width:190px; display:flex; flex-direction:column; gap:8px; z-index:1200;">
+  <div id="mapNodeTypeBox" style="padding:10px 12px; border-radius:14px; background:rgba(28,30,33,0.92); border:1px solid rgba(0,212,255,0.25); font-size:14px; line-height:1.4;"></div>
+  <div id="mapNodeRelicBox" style="padding:10px 12px; border-radius:14px; background:rgba(28,30,33,0.92); border:1px solid rgba(255,212,0,0.25); font-size:14px; line-height:1.4;"></div>
+</div>
+
+<div class="row hidden" id="pauseRow">
     <button id="btnResume" class="focusable">Resume</button>
     <button id="btnExit" class="focusable">Exit</button>
   </div>
@@ -259,6 +284,10 @@
 
 <script>
 /* =========================================================
+   ✅ SCRIPT START
+========================================================= */
+
+/* =========================================================
    ✅ INPUT SYSTEM
 ========================================================= */
 const DPAD = {
@@ -267,12 +296,16 @@ const DPAD = {
   SELECT: 'Enter', BACK: 'Escape',
 };
 
+/* =========================================================
+   ✅ UI REFERENCES
+========================================================= */
 const ui = {
   canvas: document.getElementById('c'),
   topUI: document.getElementById('topUI'),
   score: document.getElementById('score'),
   fd: document.getElementById('fd'),
   bs: document.getElementById('bs'),
+dmg: document.getElementById('dmg'),
   bc: document.getElementById('bc'),
   rt: document.getElementById('rt'),
 
@@ -285,6 +318,10 @@ hud: document.getElementById('hud'),
 status: document.getElementById('status'),
 
 pauseRow: document.getElementById('pauseRow'),
+relicPanel: document.getElementById('relicPanel'),
+mapNodePanel: document.getElementById('mapNodePanel'),
+mapNodeTypeBox: document.getElementById('mapNodeTypeBox'),
+mapNodeRelicBox: document.getElementById('mapNodeRelicBox'),
 btnResume: document.getElementById('btnResume'),
 btnExit: document.getElementById('btnExit'),
 
@@ -298,6 +335,8 @@ btnExit: document.getElementById('btnExit'),
 debugLevelSelect: document.getElementById('debugLevelSelect'),
   btnDbgLaunch: document.getElementById('btnDbgLaunch'),
   btnDbgBack: document.getElementById('btnDbgBack'),
+debugRelicSelect: document.getElementById('debugRelicSelect'),
+debugRelicChosen: document.getElementById('debugRelicChosen'),
 
 perkRow: document.getElementById('perkRow'),
 perk1: document.getElementById('perk1'),
@@ -309,6 +348,9 @@ flash: document.getElementById('flashOverlay'),
 
 const ctx = ui.canvas.getContext('2d', { alpha:true });
 
+/* =========================================================
+   ✅ RUNTIME STATE
+========================================================= */
 let hasIMU = false;
 let running = false;
 
@@ -328,6 +370,8 @@ if (!DEV_MODE && ui.btnDebug) {
 
 let isPaused = false;
 let mode = 'menu';
+let activeRelicChoices = [];
+let relicReplaceCandidate = null;
 
 let previousMode = 'menu'; // ✅ track mode before perk screen
 let playerLuck = 0;
@@ -347,12 +391,72 @@ let missileDrones = [];
 let enemyMissiles = [];
 let pawns = [];
 
+/* =========================================================
+   ✅ RELIC SYSTEM (CORE)
+========================================================= */
+
+let relics = [];
+const MAX_RELICS = 3;
+
+let novaShards = 0;
+
+let playerRelicState = {
+  shotCounter: 0,
+  pierceBonus: 0,
+
+  // ✅ NEW: boomerang alternation
+  boomerangToggle: 0
+};
+
+function hasRelic(id) {
+  return relics.some(r => r.id === id);
+}
+
+function pickRandomRelicPreview(excludeIds = []) {
+  const pool = RELIC_POOL.filter(r => !excludeIds.includes(r.id));
+  const finalPool = pool.length ? pool : RELIC_POOL;
+  return finalPool[Math.floor(Math.random() * finalPool.length)];
+}
+
+
+// =====================================
+// ✅ RELIC FACTORY
+// =====================================
+function makeRelic({ id, name, desc, hooks = {}, apply = null, remove = null }) {
+  return {
+    id,
+    name,
+    desc,
+    hooks,
+    apply,
+    remove
+  };
+}
+
+// =====================================
+// ✅ RELIC HOOK TRIGGER
+// =====================================
+function triggerRelicHook(hookName, ...args) {
+  for (let i = 0; i < relics.length; i++) {
+    const r = relics[i];
+    const fn = r?.hooks?.[hookName];
+
+    if (typeof fn === 'function') {
+      fn(...args);
+    }
+  }
+}
 
 // =====================================================
 // ✅ ACTIVE LEVEL STATE
 // =====================================================
+/* =========================================================
+   ✅ ACTIVE LEVEL STATE
+========================================================= */
 let activeNodeId = null;
 let activeLevelKey = null;
+// ✅ active challenges during current level
+let activeChallenges = [];
 let activeLevelDef = null;
 
 let levelTimer = 0;
@@ -401,6 +505,9 @@ function moveFocus(step){
 // =====================================================
 // ✅ STAT HIGHLIGHT + PERK PREVIEW SYSTEM
 // =====================================================
+/* =========================================================
+   ✅ STAT HIGHLIGHT + PERK PREVIEW
+========================================================= */
 function getRarityColor(rarity) {
   if (rarity === 'uncommon') return '#4cff4c';
   if (rarity === 'rare') return '#66ccff';
@@ -422,6 +529,8 @@ const rps = getFireRateRPS(delay);
 ui.fd.textContent = rps.toFixed(2) + 'rps';
   const vel = getBulletSpeed() * 60;
 ui.bs.textContent = Math.round(vel) + 'm/s';
+ const dmg = getBulletDamage();
+ ui.dmg.textContent = dmg.toFixed(1);
   ui.bc.textContent = getMagSize();
   ui.rt.textContent = (getReloadTime() / 60).toFixed(1) + 's';
   ui.luck.textContent = (1 + playerLuck).toFixed(2);
@@ -543,6 +652,9 @@ document.addEventListener('focusin', (e) => {
 // ✅ INPUT (GRID LANES ONLY — NO DASH)
 // Replace: keydown + keyup + touchstart + touchend
 // =========================================================
+/* =========================================================
+   ✅ KEYBOARD / TOUCH INPUT WIRING
+========================================================= */
 document.addEventListener('keydown', (e) => {
 // =====================================
 // ✅ DEBUG KEYS (ONLY IF DEV MODE)
@@ -614,6 +726,7 @@ if (DEV_MODE) {
 // =========================
 if (mode === 'map') {
   handleMapKey(e);
+  renderMapNodePreview();
   return;
 }
 
@@ -812,6 +925,9 @@ function calibrate(){
 ========================================================= */
 
 // ✅ change this ONE number later if you want more/less columns
+/* =========================================================
+   ✅ GRID / LANE SYSTEM
+========================================================= */
 let GRID_COLS = 8;
 
 // ✅ usable horizontal space for lanes (tune these if you want wider margins)
@@ -862,6 +978,9 @@ function clampLane(i){
 }
 /* =========================================================
    ✅ MOVEMENT SYSTEM (GRID STYLE ONLY)
+========================================================= */
+/* =========================================================
+   ✅ MOVEMENT SYSTEM
 ========================================================= */
 let playerY = 540;
 
@@ -966,26 +1085,62 @@ let wasCenteredLastFrame = true;
    ✅ WEAPON SYSTEM (REAL TIME RELOAD)
 ========================================================= */
 
+/* =========================================================
+   ✅ WEAPON SYSTEM
+========================================================= */
 let weapon = {
   // ✅ CORE STATS
   baseFireRate: 0.63, // was ~60 / 95
   baseBulletSpeed: 4.5,
   baseMagSize: 6,
-  baseReloadTime: 210, // still in frames
+  baseReloadTime: 210, // still in frames,
+  baseDamage: 1,
 
   // ✅ BONUS VALUES
   bonusFireRate: 0,
   bonusBulletSpeed: 0,
   bonusMagSize: 0,
-  bonusReloadTime: 0
+  bonusReloadTime: 0,
+  bonusDamage: 0
 };
 
+
+let explosions = [];
 let bullets = [];
 let fireTimer = 0;
 
 let ammoInMag = 0;
 let isReloading = false;
 let reloadTimer = 0;
+
+// =====================================
+// ✅ LAST CHAMBER DEBUG TRACE
+// =====================================
+let lastChamberDebug = {
+ enabled: true,
+ lines: ['debug initialized'],
+ lastShotFlag: false,
+ lastBulletId: null,
+ lastBulletHit: false,
+ lastExplosionTriggered: false,
+ lastExplosionVisualSpawned: false,
+ lastExplosionDamageApplied: false
+};
+function lcDebugResetForShot() {
+ if (!lastChamberDebug.enabled) return;
+ lastChamberDebug.lines = [];
+ lastChamberDebug.lastShotFlag = false;
+ lastChamberDebug.lastBulletId = null;
+ lastChamberDebug.lastBulletHit = false;
+ lastChamberDebug.lastExplosionTriggered = false;
+ lastChamberDebug.lastExplosionVisualSpawned = false;
+ lastChamberDebug.lastExplosionDamageApplied = false;
+}
+function lcDebugLog(msg) {
+ if (!lastChamberDebug.enabled) return;
+ lastChamberDebug.lines.push(msg);
+ if (lastChamberDebug.lines.length > 14) lastChamberDebug.lines.shift();
+}
 
 // =====================================
 // ✅ GLOBAL PERK TUNING KNOBS
@@ -1000,6 +1155,11 @@ const PERK_STAT_MULT = {
   luck: 1.0,
   pickup: 1.0
 };
+
+// =====================================
+// ✅ EXPLOSION DAMAGE SYSTEM
+// =====================================
+let explosionDamageMultiplier = 2.0; // ✅ DEFAULT = 2x
 
 // =====================================
 // ✅ BASE PERK VALUES
@@ -1095,9 +1255,188 @@ function getReloadTime(){
   ));
 }
 
+// =====================================================
+// ✅ BULLET DAMAGE SYSTEM (FOUNDATION)
+// =====================================================
+
+/* =========================================================
+   ✅ BULLET DAMAGE SYSTEM
+========================================================= */
+function getBulletDamage() {
+  return Math.max(0.1, weapon.baseDamage + weapon.bonusDamage);
+}
+
+// ✅ PROJECTILE COLOR SYSTEM HELPERS (FIX)
+function getProjectileVisualColor(shotTags = {}) {
+  if (shotTags.explosiveOnImpact) return '#ffd400';
+  if (shotTags.crossfire) return '#66ccff';
+  return '#ffffff';
+}
+
+function getExplosiveBulletCount() {
+  if (!hasRelic('last_chamber')) return 0;
+  return hasRelic('twin_emitter') ? 2 : 1;
+}
+
+function getAmmoSlotVisualState(i, maxAmmo, currentAmmo) {
+  const explosiveCount = Math.min(getExplosiveBulletCount(), maxAmmo);
+
+  // ✅ explosive bullets live at the START (left side of clip)
+  const explosiveLoaded = Math.min(currentAmmo, explosiveCount);
+  const normalLoaded = Math.max(0, currentAmmo - explosiveLoaded);
+
+  const isExplosiveLoaded = i < explosiveLoaded;
+  const isNormalLoaded = i >= explosiveLoaded && i < (explosiveLoaded + normalLoaded);
+
+  const isLoaded = isExplosiveLoaded || isNormalLoaded;
+
+  let shotTags = {};
+  if (isExplosiveLoaded) shotTags.explosiveOnImpact = true;
+
+  return {
+    isLoaded,
+    color: isLoaded ? getProjectileVisualColor(shotTags) : 'rgba(255,255,255,0.25)'
+  };
+}
+
+
+
+let nextBulletId = 1;
+
+function createPlayerBullet(config = {}) {
+  return {
+    id: nextBulletId++,
+
+    // position
+    x: config.x ?? playerX,
+    y: config.y ?? 520,
+    vx: config.vx ?? 0,
+    dir: config.dir ?? -1,
+
+    // ✅ core damage
+    damage: config.damage ?? getBulletDamage(),
+
+    // ✅ future systems
+    pierceRemaining: config.pierceRemaining ?? 0,
+    pierceDamageReduction: config.pierceDamageReduction ?? 0.5,
+
+    hasReturned: config.hasReturned ?? false,
+    shotTags: config.shotTags ? { ...config.shotTags } : {}
+  };
+}
+
+
+
+
+
+function spawnExplosionVisual(x, y, radius){
+ explosions.push({ x, y, r: 0, maxR: radius, life: 1.0, age: 0 });
+ lastChamberDebug.lastExplosionVisualSpawned = true;
+ lcDebugLog('spawn visual radius=' + radius);
+}
+function applyExplosionDamage(x, y, radius=48, damage=1) {
+  lastChamberDebug.lastExplosionTriggered = true;
+  lcDebugLog('apply explosion radius=' + radius + ' damage=' + damage);
+
+  spawnExplosionVisual(x, y, radius);
+
+  const targets = [...enemies, ...pawns, ...missileDrones, ...asteroids];
+  let hits = 0;
+
+  targets.forEach(t => {
+    if (!t) return;
+
+    const left = t.x - (t.w / 2);
+    const right = t.x + (t.w / 2);
+    const top = t.y - (t.h / 2);
+    const bottom = t.y + (t.h / 2);
+
+    const closestX = Math.max(left, Math.min(x, right));
+    const closestY = Math.max(top, Math.min(y, bottom));
+
+    const dx = closestX - x;
+    const dy = closestY - y;
+
+    if (dx * dx + dy * dy <= radius * radius) {
+      if (typeof t.hp !== 'number') return;
+
+      t.hp -= damage;
+      hits++;
+
+      if (t.hp <= 0) {
+        t.hp = 0;
+
+        if (enemies.includes(t)) {
+          t.alive = false;
+          enemies.splice(enemies.indexOf(t), 1);
+          awardXP(10);
+          triggerRelicHook('onKill', t);
+        } else if (pawns.includes(t)) {
+          trySpawnPawnGemDrop(t);
+          awardXPFromSource('pawn', t);
+          triggerRelicHook('onKill', t);
+          pawns.splice(pawns.indexOf(t), 1);
+        } else if (missileDrones.includes(t)) {
+          missileDrones.splice(missileDrones.indexOf(t), 1);
+          awardXPFromSource('missile_drone', t);
+          triggerRelicHook('onKill', t);
+        } else if (asteroids.includes(t)) {
+          if (t.type === 'heavy_asteroid' && !t.breaking) {
+            t.breaking = true;
+            t.breakTimer = t.breakDelay ?? 0.2;
+          } else {
+            asteroids.splice(asteroids.indexOf(t), 1);
+            if (t.type === 'barrier') {
+              awardXPFromSource('barrier', t);
+            } else {
+              awardXPFromSource('asteroid', t);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  lastChamberDebug.lastExplosionDamageApplied = hits > 0;
+  lcDebugLog('aoe hits=' + hits);
+}
+
+function applyImpactEffectsFromBullet(b) {
+ if (!b) return;
+ if (b.id === lastChamberDebug.lastBulletId) {
+  lastChamberDebug.lastBulletHit = true;
+  lcDebugLog('tracked bullet impact id=' + b.id);
+ }
+ lcDebugLog('impact bullet=' + b.id + ' explosive=' + (!!b.shotTags?.explosiveOnImpact));
+ if (b.shotTags && b.shotTags.explosiveOnImpact) {
+  const r = b.shotTags.explosionRadius || 48;
+  const d = b.shotTags.explosionDamage || b.damage || 1;
+  applyExplosionDamage(b.x, b.y, r, d);
+ }
+}
+
+function shouldRemoveBulletAfterHit(b, target) {
+  if ((b.pierceRemaining ?? 0) > 0) {
+    b.pierceRemaining -= 1;
+
+    const halfH = (target?.h ?? 20) / 2;
+    if ((b.dir ?? -1) < 0) {
+      b.y = (target?.y ?? b.y) - halfH - 4;
+    } else {
+      b.y = (target?.y ?? b.y) + halfH + 4;
+    }
+    return false;
+  }
+  return true;
+}
+
+
 // =====================================
 // ✅ RELOAD HELPERS
 // =====================================
+/* =========================================================
+   ✅ RELOAD HELPERS
+========================================================= */
 function startReload(){
   if (isReloading) return;
 
@@ -1114,12 +1453,17 @@ function finishReload(){
 // =====================================
 // ✅ WEAPON STATE RESET
 // =====================================
+/* =========================================================
+   ✅ WEAPON STATE RESET
+========================================================= */
 function initWeaponState(){
   // ✅ reset bonus stats FIRST
   weapon.bonusFireRate = 0;
   weapon.bonusBulletSpeed = 0;
   weapon.bonusMagSize = 0;
   weapon.bonusReloadTime = 0;
+  weapon.bonusDamage = 0;
+ weapon.bonusDamage = 0;
 
   // ✅ then reset weapon runtime state
   ammoInMag = 0;
@@ -1131,6 +1475,9 @@ function initWeaponState(){
 // =====================================
 // ✅ APPLY HELPERS
 // =====================================
+/* =========================================================
+   ✅ STAT APPLY HELPERS
+========================================================= */
 function applyFireRateBoost(v){ weapon.bonusFireRate += v; }
 function applyBulletVelocityBoost(v){ weapon.bonusBulletSpeed += v; }
 
@@ -1191,35 +1538,57 @@ function getPerkDesc(stat, rarity) {
 }
 
 // ---------- ✅ MAIN UPDATE (REAL TIME RELOAD) ----------
+
 function updateWeapons(dt){
-
   const spd = getBulletSpeed();
-
   bullets.forEach(b => {
-    b.y -= spd * dt * 60;
-    b.x += b.vx * dt * 60;
+    const dir = b.dir ?? -1;
+    b.y += dir * spd * dt * 60;
+    b.x += (b.vx ?? 0) * dt * 60;
+
+    if ((b.shotTags?.boomerang) && !b.hasReturned && b.y <= -20) {
+      const sourceLane = b.shotTags?.sourceLane ?? playerLane;
+      if (sourceLane <= 0 || sourceLane >= GRID_LANES.length-1) return;
+let chosenLane = sourceLane;
+
+// ✅ alternate left/right instead of random
+const dir = (playerRelicState.boomerangToggle % 2 === 0) ? -1 : 1;
+
+// ✅ try intended direction first
+if (sourceLane + dir >= 0 && sourceLane + dir < GRID_LANES.length) {
+  chosenLane = sourceLane + dir;
+} 
+// ✅ fallback (edge correction)
+else {
+  const fallbackDir = -dir;
+  if (sourceLane + fallbackDir >= 0 && sourceLane + fallbackDir < GRID_LANES.length) {
+    chosenLane = sourceLane + fallbackDir;
+  }
+}
+
+// ✅ increment toggle AFTER choosing
+playerRelicState.boomerangToggle++;
+
+      b.hasReturned = true;
+      b.dir = 1;
+      b.y = -18;
+      b.x = GRID_LANES[chosenLane];
+      b.vx = 0;
+    }
   });
 
-  bullets = bullets.filter(
-    b => b.y > -20 && b.x > -40 && b.x < 640
-  );
+  bullets = bullets.filter(b => b.y > -40 && b.y < 640 && b.x > -40 && b.x < 640);
 
   if (isReloading) {
     reloadTimer -= dt;
-
-    if (reloadTimer <= 0) {
-      finishReload();
-    }
+    if (reloadTimer <= 0) finishReload();
     return;
   }
-
   if (ammoInMag <= 0) {
     startReload();
     return;
   }
-
   fireTimer -= dt;
-
   if (fireTimer <= 0) {
     if (isPlayerCenteredInLane()) {
       fire();
@@ -1228,20 +1597,95 @@ function updateWeapons(dt){
   }
 }
 
+
+
+
 function fire(){
-  if (!isPlayerCenteredInLane()) return;
-  if (ammoInMag <= 0 || isReloading) return;
+ if (!isPlayerCenteredInLane()) return;
+ if (ammoInMag <= 0 || isReloading) return;
 
-  bullets.push({ x: playerX, y: 520, vx: 0 });
-  ammoInMag--;
+ const bulletsToSpawn = [];
+ const baseDamage = getBulletDamage();
+playerRelicState.shotCounter++;
+ const twinMode = hasRelic('twin_emitter');
+ const mainBulletCount = twinMode ? Math.min(2, ammoInMag) : 1;
+ const lastShot = (ammoInMag <= mainBulletCount);
+ lcDebugResetForShot();
+ lcDebugLog('fire start ammo=' + ammoInMag + ' mainBulletCount=' + mainBulletCount + ' lastShot=' + lastShot + ' hasLastChamber=' + hasRelic('last_chamber'));
+ lastChamberDebug.lastShotFlag = lastShot && hasRelic('last_chamber');
+ const firedLane = playerLane;
+ const chamberShotIndex = getMagSize() - ammoInMag + 1;
 
-  if (ammoInMag <= 0) startReload();
+ function buildBullet(offset = 0, vx = 0) {
+  let damage = baseDamage;
+  
+
+  let pierceRemaining = 0;
+  if (hasRelic('piercing_rounds')) {
+   pierceRemaining = 1 + (playerRelicState.pierceBonus || 0);
+  }
+
+  return createPlayerBullet({
+   x: playerX + offset,
+   y: 520,
+   vx,
+   dir: -1,
+   damage,
+   pierceRemaining,
+   hasReturned: false,
+   shotTags: {
+ boomerang: hasRelic('boomerang_chamber'),
+ crossfire: false,
+ twin: twinMode,
+ sourceLane: firedLane,
+ explosiveOnImpact: hasRelic('last_chamber') && lastShot,
+ explosionRadius: 150,
+ explosionDamage: baseDamage * explosionDamageMultiplier
+ }
+  });
+ }
+
+ if (mainBulletCount === 2) {
+  bulletsToSpawn.push(buildBullet(-6, 0), buildBullet(6, 0));
+ } else {
+  bulletsToSpawn.push(buildBullet(0, 0));
+ }
+
+ // Crossfire triggers on every 4th chamber shot in the current magazine.
+ if (hasRelic('crossfire_relay') && playerRelicState.shotCounter % 4 === 0) {
+  const left = buildBullet(0, -1.35);
+  left.shotTags.crossfire = true;
+  left.color = getProjectileVisualColor(left.shotTags);
+  const right = buildBullet(0, 1.35);
+  right.shotTags.crossfire = true;
+  right.color = getProjectileVisualColor(right.shotTags);
+  bulletsToSpawn.push(left, right);
+ }
+
+ bullets.push(...bulletsToSpawn);
+ const explosiveBullet = bulletsToSpawn.find(b => b.shotTags?.explosiveOnImpact);
+ if (explosiveBullet) {
+  lastChamberDebug.lastBulletId = explosiveBullet.id;
+  lcDebugLog('explosive bullet created id=' + explosiveBullet.id + ' radius=' + (explosiveBullet.shotTags?.explosionRadius ?? 48));
+ } else {
+  lcDebugLog('no explosive bullet created this shot');
+ }
+ ammoInMag -= mainBulletCount;
+ if (ammoInMag < 0) ammoInMag = 0;
+
+ triggerRelicHook('onFire');
+ if (ammoInMag <= 0) startReload();
 }
+
+
 /* =========================================================
    ✅ LEVEL / XP SYSTEM (TOTAL XP + LEVEL XP + ANIMATED BAR)
 ========================================================= */
 
 // Total XP (never resets except on new run) – this is what your pause HUD "Score" shows.
+/* =========================================================
+   ✅ XP / LEVEL SYSTEM
+========================================================= */
 let score = 0;
 
 // Logical level + XP toward next level (gameplay truth)
@@ -1400,6 +1844,35 @@ function makePerk({ id, name, rarity, stat }) {
   };
 }
 
+
+/* ========================================================= 
+ ✅ RELIC POOL (RUN-DEFINING RELICS)
+========================================================= */
+/* =========================================================
+   ✅ RELIC POOL
+========================================================= */
+let RELIC_POOL = [
+  makeRelic({ id: 'twin_emitter', name: 'Twin Emitter', desc: 'Each shot fires two close rounds.' }),
+  makeRelic({ id: 'last_chamber', name: 'Last Chamber', desc: 'Final bullet in the mag deals double damage.' }),
+  makeRelic({ id: 'salvage_net', name: 'Salvage Net', desc: 'Gems collected after passing the player are worth 3x.' }),
+  makeRelic({ id: 'boomerang_chamber', name: 'Boomerang Chamber', desc: 'Bullets return in a lane beside the fired lane.' }),
+  makeRelic({ id: 'crossfire_relay', name: 'Crossfire Relay', desc: 'Every 5th shot also fires two side rounds.' }),
+  makeRelic({ id: 'piercing_rounds', name: 'Armor Piercing', desc: 'Bullets pierce through 1 enemy before breaking.' })
+];
+
+// =====================================
+// ✅ RELIC CHOICE GENERATION
+// =====================================
+function generateRelicChoices(count = 1) {
+  activeRelicChoices = [];
+  if (activeNodeId && mapNodeLookup[activeNodeId]?.data?.relicPreview) {
+    activeRelicChoices.push(mapNodeLookup[activeNodeId].data.relicPreview);
+    return;
+  }
+  const chosen = pickRandomRelicPreview();
+  activeRelicChoices.push(chosen);
+}
+
 let availablePerks = [
 
   // =====================================
@@ -1456,6 +1929,9 @@ let availablePerks = [
 
 
 // current offered perks
+/* =========================================================
+   ✅ PERK CHOICE GENERATION
+========================================================= */
 let activePerkChoices = [];
 
 // ✅ Base rarity weights (commons are normal; higher tiers exponentially rarer)
@@ -1545,29 +2021,82 @@ function generatePerkChoices(count = 3){
   }
 }
 
+
+// =====================================
+// ✅ PICK PERK / RELIC / REPLACEMENT
+// =====================================
+
+/* =========================================================
+   ✅ PERK / RELIC PICK FLOW
+========================================================= */
 function pickPerk(index){
-clearStatHighlights();
+  clearStatHighlights();
+
+  if (mode === 'relic_replace') {
+    // back button in third slot
+    if (index === 2) {
+      setMode('relic_reward');
+      return;
+    }
+
+    const old = relics[index];
+    if (!old) {
+      setMode('relic_reward');
+      return;
+    }
+
+    if (old.remove) old.remove();
+    relics[index] = relicReplaceCandidate;
+    if (relicReplaceCandidate && relicReplaceCandidate.apply) {
+      relicReplaceCandidate.apply();
+    }
+
+    relicReplaceCandidate = null;
+    isPaused = false;
+    returnToMap();
+    return;
+  }
+
+  if (mode === 'relic_reward') {
+    if (index === 0) {
+      const relic = activeRelicChoices[0];
+      if (!relic) {
+        novaShards += 25;
+        ui.status.textContent = '+25 Nova Shards';
+      } else if (relics.length < MAX_RELICS) {
+        relics.push(relic);
+        if (relic.apply) relic.apply();
+      } else {
+        relicReplaceCandidate = relic;
+        setMode('relic_replace');
+        return;
+      }
+    }
+
+    if (index === 1 || index === 2) {
+      novaShards += 25;
+      ui.status.textContent = '+25 Nova Shards';
+    }
+
+    isPaused = false;
+    returnToMap();
+    return;
+  }
+
   const perk = activePerkChoices[index];
   if (!perk) return;
-
-  // ✅ apply perk
   perk.apply();
-
-  // ✅ resume XP bar after perk
   displayXP = 0;
   xpBarState = (pendingDisplayLevels > 0) ? 'fill' : 'spill';
-
-  // ✅ resume gameplay
   isPaused = false;
   running = true;
-
-  // ✅ return to what we were testing (debug stays isolated)
   if (typeof previousMode === 'string' && previousMode.startsWith('debug_')) {
     setMode(previousMode);
   } else {
     setMode('game');
   }
 }
+
 
 // ✅ ✅ ADD THIS RIGHT HERE
 function rerollPerks(){
@@ -1577,53 +2106,117 @@ function rerollPerks(){
   ui.perk2.focus();        // go back to middle option
 }
 
+
+/* =========================================================
+   ✅ PERK / RELIC UI RENDERING
+========================================================= */
 function renderPerkUI(){
-
   const slots = [ui.perk1, ui.perk2, ui.perk3];
-
-for (let i = 0; i < slots.length; i++) {
-  const p = activePerkChoices[i];
-  if (!p) continue;
-
-  // ✅ RARITY COLORS
-  let color = '#dddddd'; // common (off white)
-
-  if (p.rarity === 'uncommon') color = '#4cff4c';   // green
-  if (p.rarity === 'rare') color = '#66ccff';       // light blue
-  if (p.rarity === 'epic') color = '#b84cff';       // purple
-  if (p.rarity === 'legendary') color = '#ff9933';  // orange
-
-  // ✅ APPLY BORDER COLOR
-  slots[i].style.borderColor = color;
-
-  // ✅ OPTIONAL GLOW (for non-common)
-if (p.rarity !== 'common') {
-  slots[i].style.boxShadow = `0 0 6px ${color}`;
-} else {
-  slots[i].style.boxShadow = '';
+  slots.forEach(s => { s.classList.remove('hidden'); s.disabled = false; });
+  for (let i = 0; i < slots.length; i++) {
+    const p = activePerkChoices[i];
+    if (!p) continue;
+    let color = '#dddddd';
+    if (p.rarity === 'uncommon') color = '#4cff4c';
+    if (p.rarity === 'rare') color = '#66ccff';
+    if (p.rarity === 'epic') color = '#b84cff';
+    if (p.rarity === 'legendary') color = '#ff9933';
+    slots[i].style.borderColor = color;
+    slots[i].style.boxShadow = (p.rarity !== 'common') ? `0 0 6px ${color}` : '';
+    slots[i].innerHTML = `
+      <div style="text-align:center;">
+        <div>${p.name}</div>
+        <div style="font-size:14px; opacity:0.7;">${typeof p.desc === 'function' ? p.desc() : p.desc}</div>
+        <div style="font-size:12px; color:${color};">${p.rarity.toUpperCase()}</div>
+      </div>`;
+    slots[i].onfocus = () => highlightPerkPreview(p);
+  }
 }
 
-  // ✅ BUTTON CONTENT
-  slots[i].innerHTML = `
+
+function renderRelicUI() {
+  const slots = [ui.perk1, ui.perk2, ui.perk3];
+  slots.forEach(s => { s.classList.remove('hidden'); s.disabled = false; s.style.boxShadow = ''; });
+
+  const r1 = activeRelicChoices[0];
+  if (r1) {
+    slots[0].innerHTML = `
+      <div style="text-align:center;">
+        <div>${r1.name}</div>
+        <div style="font-size:14px; opacity:0.7;">${typeof r1.desc === 'function' ? r1.desc() : r1.desc}</div>
+        <div style="font-size:12px; color:#ffd400;">RELIC</div>
+      </div>`;
+    slots[0].style.borderColor = '#ffd400';
+  }
+
+  slots[1].innerHTML = `
     <div style="text-align:center;">
-      <div>${p.name}</div>
-      <div style="font-size:14px; opacity:0.7;">${typeof p.desc === 'function' ? p.desc() : p.desc}</div>
-      <div style="font-size:12px; color:${color};">${p.rarity.toUpperCase()}</div>
-    </div>
-  `;
-// ✅ highlight stat + show preview on focus
-slots[i].onfocus = () => {
-  highlightPerkPreview(p);
-};
+      <div>Nova Shards</div>
+      <div style="font-size:14px; opacity:0.7;">+25 Shards</div>
+      <div style="font-size:12px; color:#66ccff;">CURRENCY</div>
+    </div>`;
+  slots[1].style.borderColor = '#66ccff';
 
+  slots[2].classList.add('hidden');
+  slots[2].disabled = true;
 }
 
+
+
+function renderRelicReplaceUI() {
+  const slots = [ui.perk1, ui.perk2, ui.perk3];
+  slots.forEach(s => { s.classList.remove('hidden'); s.disabled = false; s.style.boxShadow = ''; });
+
+  for (let i = 0; i < slots.length; i++) {
+    const current = relics[i];
+    if (current) {
+      slots[i].innerHTML = `
+        <div style="text-align:center;">
+          <div style="color:#ff6666;">REPLACE</div>
+          <div>${current.name}</div>
+          <div style="font-size:12px; opacity:0.6;">→ ${relicReplaceCandidate.name}</div>
+        </div>`;
+      slots[i].style.borderColor = '#ff6666';
+    } else {
+      slots[i].innerHTML = `
+        <div style="text-align:center;">
+          <div>Back</div>
+          <div style="font-size:12px; opacity:0.6;">Return to relic reward</div>
+        </div>`;
+      slots[i].style.borderColor = '#66ccff';
+    }
+  }
 }
+
+
+
+
+
+function renderRelicPanel() {
+ if (!ui.relicPanel) return;
+ const slots = [];
+ for (let i = 0; i < MAX_RELICS; i++) {
+  const relic = relics[i];
+  slots.push(`
+   <div style="border:1px solid rgba(255,212,0,0.30); border-radius:10px; min-height:58px; padding:8px 6px; text-align:center; background:rgba(16,18,22,0.55); display:flex; align-items:center; justify-content:center; font-size:12px; line-height:1.2;">
+    ${relic ? `<span style="color:#ffd400; font-weight:700;">${relic.name}</span>` : `<span style="opacity:0.35;">Empty</span>`}
+   </div>
+  `);
+ }
+ ui.relicPanel.innerHTML = `
+  <div style="color:#ffd400; font-weight:800; margin-bottom:6px;">Relic Slots</div>
+  <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">${slots.join('')}</div>
+ `;
+}
+
 
 /* =========================================================
    ✅ XP CONFIG SYSTEM (CENTRALIZED)
 ========================================================= */
 
+/* =========================================================
+   ✅ XP CONFIG SYSTEM
+========================================================= */
 const XP_CONFIG = {
 
   pawn: {
@@ -1729,6 +2322,8 @@ function spawnEnemies(){
 
         w: 24,
         h: 16,
+        hp: 1,
+        maxHp: 1,
         alive: true,
 
         row: row, // ✅ linked to shared row
@@ -1828,30 +2423,35 @@ function updateEnemies(dt){
   });
 }
 
+
 function handleBulletsVsEnemies(){
-  for (let bi = bullets.length - 1; bi >= 0; bi--) {
-    const b = bullets[bi];
-    for (let ei = 0; ei < enemies.length; ei++) {
-      const e = enemies[ei];
-      if (!e.alive) continue;
-      const hit =
-        b.x >= (e.x - e.w/2) && b.x <= (e.x + e.w/2) &&
-        b.y >= (e.y - e.h/2) && b.y <= (e.y + e.h/2);
-      if (hit) {
-        bullets.splice(bi, 1);
-        e.alive = false;
-awardXP(10);
-        break;
-      }
-    }
+ for (let bi = bullets.length - 1; bi >= 0; bi--) {
+  const b = bullets[bi]; if (!b) continue;
+  for (let ei = enemies.length - 1; ei >= 0; ei--) {
+   const e = enemies[ei]; if (!e || !e.alive) continue;
+   const hit = b.x >= (e.x - e.w/2) && b.x <= (e.x + e.w/2) && b.y >= (e.y - e.h/2) && b.y <= (e.y + e.h/2);
+   if (hit) {
+    if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('enemy hit by tracked bullet id=' + b.id);
+    e.hp = (e.hp ?? 1) - (b.damage ?? 1);
+    applyImpactEffectsFromBullet(b);
+    const keepBullet = !shouldRemoveBulletAfterHit(b, e);
+    if (!keepBullet) bullets.splice(bi, 1);
+    if (e.hp <= 0) { e.hp = 0; e.alive = false; enemies.splice(ei, 1); awardXP(10); triggerRelicHook('onKill', e); }
+    break;
+   }
   }
+ }
 }
+
 
 /* =========================================================
    ✅ ENEMY TYPE: ASTEROID (FALLS DOWN, 1 HP)
    Built to extend later (shooting, lane changes, more HP)
 ========================================================= */
 
+/* =========================================================
+   ✅ ASTEROID / BARRIER SYSTEM
+========================================================= */
 let asteroids = [];
 let asteroidSpawnTimer = 0;
 
@@ -2003,45 +2603,29 @@ function createHeavyAsteroid(config = {}) {
 
 
 
+
 function handleBulletsVsAsteroids(){
-  for (let ai = asteroids.length - 1; ai >= 0; ai--) {
-    const a = asteroids[ai];
-
-    for (let bi = bullets.length - 1; bi >= 0; bi--) {
-      const b = bullets[bi];
-
-      const hit =
-        b.x >= (a.x - a.w/2) && b.x <= (a.x + a.w/2) &&
-        b.y >= (a.y - a.h/2) && b.y <= (a.y + a.h/2);
-
-      if (hit) {
-        bullets.splice(bi, 1);
-        a.hp--;
-a.hitFlash = 1; // ✅ trigger blink
-
-if (a.hp <= 0) {
-
-  // ✅ heavy asteroid enters break state instead of instant death
-  if (a.type === 'heavy_asteroid' && !a.breaking) {
-    a.breaking = true;
-a.breakTimer = a.breakDelay ?? 0.2;
-    return;
-  }
-
-// ✅ destruction
-asteroids.splice(ai, 1);
-
-// ✅ barrier gives more reward (feels meaningful to break)
-if (a.type === 'barrier') {
-  awardXPFromSource('barrier', a);
-} else {
-  awardXPFromSource('asteroid', a);
-}
-}
-        break;
-      }
+ for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+  const a = asteroids[ai];
+  for (let bi = bullets.length - 1; bi >= 0; bi--) {
+   const b = bullets[bi];
+   const hit = b.x >= (a.x - a.w/2) && b.x <= (a.x + a.w/2) && b.y >= (a.y - a.h/2) && b.y <= (a.y + a.h/2);
+   if (hit) {
+    if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('asteroid hit by tracked bullet id=' + b.id + ' type=' + a.type);
+    a.hp -= (b.damage ?? 1);
+    a.hitFlash = 1;
+    applyImpactEffectsFromBullet(b);
+    const keepBullet = !shouldRemoveBulletAfterHit(b, a);
+    if (!keepBullet) bullets.splice(bi, 1);
+    if (a.hp <= 0) {
+     if (a.type === 'heavy_asteroid' && !a.breaking) { a.breaking = true; a.breakTimer = a.breakDelay ?? 0.2; break; }
+     asteroids.splice(ai, 1);
+     if (a.type === 'barrier') awardXPFromSource('barrier', a); else awardXPFromSource('asteroid', a);
     }
+    break;
+   }
   }
+ }
 }
 // =====================================================
 // ✅ HEAVY ASTEROID BURST
@@ -2121,6 +2705,9 @@ function spawnGemBurst(x, y){
    Lane-tracking hover turret with downward missiles
 ========================================================= */
 
+/* =========================================================
+   ✅ MISSILE DRONE SYSTEM
+========================================================= */
 function createMissileDrone(config = {}) {
   const laneIndex = (
     config.laneIndex !== undefined
@@ -2244,6 +2831,21 @@ function updateMissileDrones(dt) {
   // ✅ update missiles
   // -----------------------------------
   enemyMissiles.forEach(m => {
+
+// ✅ crude hit check with player
+const hit =
+  Math.abs(m.x - playerX) < 12 &&
+  Math.abs(m.y - playerY) < 12;
+
+if (hit) {
+  activeChallenges.forEach(c => {
+    if (c.id === 'no_hit') {
+      c.failed = true;
+    }
+  });
+}
+
+
     m.y += m.fall * dt * 60;
   });
 
@@ -2252,32 +2854,27 @@ function updateMissileDrones(dt) {
   handleBulletsVsMissileDrones();
 }
 
+
 function handleBulletsVsMissileDrones() {
-  for (let di = missileDrones.length - 1; di >= 0; di--) {
-    const d = missileDrones[di];
-
-    for (let bi = bullets.length - 1; bi >= 0; bi--) {
-      const b = bullets[bi];
-
-      const hit =
-        b.x >= (d.x - d.w / 2) && b.x <= (d.x + d.w / 2) &&
-        b.y >= (d.y - d.h / 2) && b.y <= (d.y + d.h / 2);
-
-      if (hit) {
-        bullets.splice(bi, 1);
-        d.hp--;
-        d.hitFlash = 1;
-
-        if (d.hp <= 0) {
-          missileDrones.splice(di, 1);
-          awardXPFromSource('missile_drone', d);
-        }
-
-        break;
-      }
-    }
+ for (let di = missileDrones.length - 1; di >= 0; di--) {
+  const d = missileDrones[di];
+  for (let bi = bullets.length - 1; bi >= 0; bi--) {
+   const b = bullets[bi];
+   const hit = b.x >= (d.x - d.w / 2) && b.x <= (d.x + d.w / 2) && b.y >= (d.y - d.h / 2) && b.y <= (d.y + d.h / 2);
+   if (hit) {
+    if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('drone hit by tracked bullet id=' + b.id);
+    d.hp -= (b.damage ?? 1);
+    d.hitFlash = 1;
+    applyImpactEffectsFromBullet(b);
+    const keepBullet = !shouldRemoveBulletAfterHit(b, d);
+    if (!keepBullet) bullets.splice(bi, 1);
+    if (d.hp <= 0) { missileDrones.splice(di, 1); awardXPFromSource('missile_drone', d); triggerRelicHook('onKill', d); }
+    break;
+   }
   }
+ }
 }
+
 
 /* =========================================================
    ✅ PAWN ENEMY SYSTEM
@@ -2287,6 +2884,9 @@ function handleBulletsVsMissileDrones() {
    - dive_bomb (future)
 ========================================================= */
 
+/* =========================================================
+   ✅ PAWN ENEMY SYSTEM
+========================================================= */
 function createPawn(config = {}) {
 
   const laneIndex = (
@@ -2412,38 +3012,35 @@ function updatePawns(dt) {
   handleBulletsVsPawns();
 }
 
+
 function handleBulletsVsPawns() {
-  for (let pi = pawns.length - 1; pi >= 0; pi--) {
-    const p = pawns[pi];
-
-    for (let bi = bullets.length - 1; bi >= 0; bi--) {
-      const b = bullets[bi];
-
-      const hit =
-        b.x >= (p.x - p.w / 2) && b.x <= (p.x + p.w / 2) &&
-        b.y >= (p.y - p.h / 2) && b.y <= (p.y + p.h / 2);
-
-      if (hit) {
-        bullets.splice(bi, 1);
-        p.hp--;
-        p.hitFlash = 1;
-
-        if (p.hp <= 0) {
-          trySpawnPawnGemDrop(p);
-          awardXPFromSource('pawn', p);
-          pawns.splice(pi, 1);
-        }
-
-        break;
-      }
-    }
+ for (let pi = pawns.length - 1; pi >= 0; pi--) {
+  const p = pawns[pi];
+  for (let bi = bullets.length - 1; bi >= 0; bi--) {
+   const b = bullets[bi];
+   const hit = b.x >= (p.x - p.w / 2) && b.x <= (p.x + p.w / 2) && b.y >= (p.y - p.h / 2) && b.y <= (p.y + p.h / 2);
+   if (hit) {
+    if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('pawn hit by tracked bullet id=' + b.id);
+    p.hp -= (b.damage ?? 1);
+    p.hitFlash = 1;
+    applyImpactEffectsFromBullet(b);
+    const keepBullet = !shouldRemoveBulletAfterHit(b, p);
+    if (!keepBullet) bullets.splice(bi, 1);
+    if (p.hp <= 0) { trySpawnPawnGemDrop(p); awardXPFromSource('pawn', p); triggerRelicHook('onKill', p); pawns.splice(pi, 1); }
+    break;
+   }
   }
+ }
 }
+
 
 /* =========================================================
    ✅ POWER-UP SYSTEM (ALL STATS)
 ========================================================= */
 
+/* =========================================================
+   ✅ POWER-UP SYSTEM
+========================================================= */
 let powerUps = [];
 let powerUpSpawnTimer = 0;
 let wave = 1;
@@ -2625,30 +3222,26 @@ function updatePowerUps(dt){
   handleBulletsVsPowerUps();
 }
 
+
 function handleBulletsVsPowerUps(){
-  for (let pi = powerUps.length - 1; pi >= 0; pi--) {
-    const p = powerUps[pi];
-
-    for (let bi = bullets.length - 1; bi >= 0; bi--) {
-      const b = bullets[bi];
-
-      const hit =
-        b.x >= (p.x - p.w/2) && b.x <= (p.x + p.w/2) &&
-        b.y >= (p.y - p.h/2) && b.y <= (p.y + p.h/2);
-
-      if (hit) {
-        bullets.splice(bi, 1);
-        p.hp--;
-
-        if (p.hp <= 0) {
-          grantPowerUp(p);
-          powerUps.splice(pi, 1);
-        }
-        break;
-      }
-    }
+ for (let pi = powerUps.length - 1; pi >= 0; pi--) {
+  const p = powerUps[pi];
+  for (let bi = bullets.length - 1; bi >= 0; bi--) {
+   const b = bullets[bi];
+   const hit = b.x >= (p.x - p.w/2) && b.x <= (p.x + p.w/2) && b.y >= (p.y - p.h/2) && b.y <= (p.y + p.h/2);
+   if (hit) {
+    if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('powerup hit by tracked bullet id=' + b.id);
+    p.hp -= (b.damage ?? 1);
+    applyImpactEffectsFromBullet(b);
+    const keepBullet = !shouldRemoveBulletAfterHit(b, p);
+    if (!keepBullet) bullets.splice(bi, 1);
+    if (p.hp <= 0) { grantPowerUp(p); powerUps.splice(pi, 1); }
+    break;
+   }
   }
+ }
 }
+
 
 function grantPowerUp(p){
 
@@ -2665,6 +3258,9 @@ awardXP(25); // suggested: powerups give less XP than score value, tune as desir
    ✅ PICKUP SYSTEM (PLAYER TOUCH ONLY)
 ========================================================= */
 
+/* =========================================================
+   ✅ PICKUP SYSTEM
+========================================================= */
 let pickups = [];
 let pickupSpawnTimer = 0;
 let pickupBursts = [];
@@ -2696,9 +3292,10 @@ function createGem(rarity, sourceFall = null) {
   }
 
   return {
-    type: 'gem',
-
-    rarity,
+  type: 'gem',
+  rarity,
+  color: (PICKUP_RARITY[rarity] && PICKUP_RARITY[rarity].color) || '#ffffff',
+  xp: (PICKUP_RARITY[rarity] && PICKUP_RARITY[rarity].xp) || 10,
 
     x: 0,
     y: 0,
@@ -2801,6 +3398,7 @@ function updatePickups(dt) {
     // ✅ DEFAULT PICKUP FALLBACK
     // =====================================
     p.y += p.fall * dt * 60;
+    if (p.y > playerY) p.passedPlayer = true;
     p.glow = Math.max(0, p.glow - dt * 2);
   });
 
@@ -2811,27 +3409,18 @@ function updatePickups(dt) {
 
 
 function handlePlayerPickupCollision() {
-
   for (let i = pickups.length - 1; i >= 0; i--) {
     const p = pickups[i];
-
-    const hit =
-      Math.abs(p.x - playerX) < 12 &&
-      Math.abs(p.y - playerY) < 12;
-
+    const hit = Math.abs(p.x - playerX) < 12 && Math.abs(p.y - playerY) < 12;
     if (hit) {
-
       const data = PICKUP_RARITY[p.rarity];
-
-      // ✅ fallback safety
-      const xp = data?.xp ?? 10;
+      let xp = data?.xp ?? 10;
       const color = data?.color ?? '#ffffff';
-
+      if (hasRelic('salvage_net') && p.passedPlayer) xp *= 2.5;
       awardXP(xp);
-
+      triggerRelicHook('onPickup', p);
       spawnPickupBurst(p.x, p.y, color);
       spawnXPText(p.x, p.y, xp, color);
-
       pickups.splice(i, 1);
     }
   }
@@ -2867,6 +3456,9 @@ function spawnXPText(x, y, value, color) {
    ✅ NODE MAP SYSTEM (PHASE 2 - NAVIGATION)
 ========================================================= */
 
+/* =========================================================
+   ✅ NODE MAP SYSTEM
+========================================================= */
 let mapNodes = [];
 let mapNodeLookup = {};
 let mapCurrentNodeId = 'start';
@@ -2991,6 +3583,9 @@ mapNodes.forEach(n => {
       resolvedType: null,
       resolvedLevel: null
     };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
   }
 
   // ✅ sample weighted combat nodes
@@ -3008,6 +3603,9 @@ mapNodes.forEach(n => {
         resolvedLevel: null,
         difficulty: 1 + n.row * 0.5
       };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
     }
 
     // all other combat nodes default to normal combat, sometimes asteroid
@@ -3021,6 +3619,9 @@ mapNodes.forEach(n => {
         resolvedLevel: null,
         difficulty: 1 + n.row * 0.5
       };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
     }
   }
 
@@ -3033,6 +3634,9 @@ mapNodes.forEach(n => {
       resolvedLevel: null,
       difficulty: 2 + n.row
     };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
   }
 
   if (n.type === 'treasure') {
@@ -3043,6 +3647,9 @@ mapNodes.forEach(n => {
       resolvedType: null,
       resolvedLevel: null
     };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
   }
 
   if (n.type === 'event') {
@@ -3053,6 +3660,9 @@ mapNodes.forEach(n => {
       resolvedType: null,
       resolvedLevel: null
     };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
   }
 
   if (n.type === 'boss') {
@@ -3064,6 +3674,9 @@ mapNodes.forEach(n => {
       resolvedLevel: null,
       difficulty: 10
     };
+n.data.challenges = generateNodeChallenges(n);
+      n.data.relicPreview = pickRandomRelicPreview();
+      n.data.relicPreview = pickRandomRelicPreview();
   }
 });
 
@@ -3102,7 +3715,9 @@ function enterMapMode() {
   isPaused = false;
 
   setMode('map');
+  renderMapNodePreview();
 }
+
 
 // ✅ CURSOR LERP
 function updateMapCursor(dt) {
@@ -3122,6 +3737,7 @@ function setMapPreview(nodeId) {
 
   mapCursorTargetX = node.x;
   mapCursorTargetY = node.y;
+  renderMapNodePreview();
 }
 
 // ✅ CLEAR PREVIEW BACK TO CURRENT
@@ -3133,6 +3749,7 @@ function clearMapPreview() {
 
   mapCursorTargetX = node.x;
   mapCursorTargetY = node.y;
+  renderMapNodePreview();
 }
 
 // ✅ CYCLE CURRENT REACHABLE OPTIONS
@@ -3322,6 +3939,41 @@ if (e.key === DPAD.SELECT) {
   e.preventDefault();
   return;
 }
+}
+
+
+function renderMapNodePreview() {
+  if (!ui.mapNodePanel || mode !== 'map') {
+    if (ui.mapNodePanel) { ui.mapNodePanel.style.display='none'; ui.mapNodePanel.style.display = 'none'; }
+    return;
+  }
+
+  const node = mapNodeLookup[mapPreviewNodeId || mapCurrentNodeId];
+  if (!node || node.id === 'start') {
+    ui.mapNodePanel.style.display='none';
+    return;
+  }
+
+  const type = node.data?.resolvedType || node.type || 'unknown';
+  const displayType = String(type).replace(/_/g, ' ');
+  const relic = node.data?.relicPreview;
+  const challenge = Array.isArray(node.data?.challenges) && node.data.challenges.length ? node.data.challenges[0] : null;
+
+  ui.mapNodeTypeBox.innerHTML = `
+    <div style="color:#66ccff; font-weight:800; margin-bottom:6px;">Node</div>
+    <div>Type: <strong>${displayType}</strong></div>
+  `;
+
+  ui.mapNodeRelicBox.innerHTML = `
+    <div style="color:#ffd400; font-weight:800; margin-bottom:6px;">Relic Reward</div>
+    <div><strong>${relic ? relic.name : 'Unknown'}</strong></div>
+    <div style="opacity:0.8; margin:4px 0 8px 0;">${relic ? relic.desc : 'No relic preview available.'}</div>
+    <div style="color:#ffffff; font-weight:700; margin-bottom:4px;">Condition</div>
+    <div>${challenge ? challenge.desc : 'No challenge'}</div>
+  `;
+
+  ui.mapNodePanel.style.display='flex';
+ ui.mapNodePanel.style.display = 'flex';
 }
 
 // ✅ DRAW MAP
@@ -3572,6 +4224,15 @@ if (r < 0.6) return '#ffffff';
   return '#99ffcc';                   // mint
 }
 
+
+function updateExplosions(dt){
+  explosions.forEach(e=>{
+    e.age += dt;
+    const t = e.age / e.life;
+    e.r = e.maxR * Math.pow(t, 0.1);
+  });
+  explosions = explosions.filter(e=>e.age < e.life);
+}
 function updateStars(dt){
   if (mode !== 'map') {
   stars.forEach(s => {
@@ -3672,16 +4333,48 @@ if (mode === 'perk_select') {
   ctx.lineWidth = 1;
   ctx.strokeRect(10, 10, 580, 580);
 
-  // ✅ show runtime errors at top-left so "freeze" becomes obvious
-  if (typeof lastRuntimeError === "string" && lastRuntimeError.length) {
+if (typeof lastRuntimeError === "string" && lastRuntimeError.length) {
     ctx.save();
     ctx.fillStyle = 'rgba(255,51,85,0.95)';
     ctx.font = '12px monospace';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText("ERROR: " + lastRuntimeError, 14, 14);
+ ctx.fillText("CHECK hit/explosion debug below", 14, 28);
     ctx.restore();
   }
+
+// =====================================================
+// ✅ CHALLENGE DEBUG DISPLAY
+// =====================================================
+if (activeChallenges && activeChallenges.length > 0 && mode !== 'map') {
+
+  ctx.save();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+
+  let y = 40;
+
+  activeChallenges.forEach(c => {
+
+    let text = c.desc;
+
+    if (c.failed) {
+      text += " ❌";
+    } else {
+      text += " ✅";
+    }
+
+    ctx.fillText(text, 12, y);
+    y += 16;
+
+  });
+
+  ctx.restore();
+}
 
 
 
@@ -3719,33 +4412,29 @@ if (!hideGameplay && mode !== 'map') {
   }
 
   // -------- AMMO UI --------
-  const ammoW = 3;
-  const ammoH = 5;
-  const ammoGap = 2;
-  const ammoMaxPerRow = 16;
-
-  const currentAmmo = ammoInMag;
-  const maxAmmo = getMagSize();
-  const ammoTopY = 560;
-
-  for (let i = 0; i < maxAmmo; i++) {
-    const row = Math.floor(i / ammoMaxPerRow);
-    const col = i % ammoMaxPerRow;
-
-    const rowCount = Math.min(maxAmmo - row * ammoMaxPerRow, ammoMaxPerRow);
-    const totalW = rowCount * (ammoW + ammoGap) - ammoGap;
-    const startX = playerX - totalW / 2;
-
-    ctx.fillStyle = (i < currentAmmo) ? '#ffffff' : 'rgba(255,255,255,0.25)';
-    ctx.fillRect(
-      startX + col * (ammoW + ammoGap),
-      ammoTopY + row * (ammoH + ammoGap),
-      ammoW,
-      ammoH
-    );
-  }
-
-  // -------- RELOAD BAR --------
+ const ammoW = 3;
+ const ammoH = 5;
+ const ammoGap = 2;
+ const ammoMaxPerRow = 16;
+ const currentAmmo = ammoInMag;
+ const maxAmmo = getMagSize();
+ const ammoTopY = 560;
+ for (let i = 0; i < maxAmmo; i++) {
+  const row = Math.floor(i / ammoMaxPerRow);
+  const col = i % ammoMaxPerRow;
+  const rowCount = Math.min(maxAmmo - row * ammoMaxPerRow, ammoMaxPerRow);
+  const totalW = rowCount * (ammoW + ammoGap) - ammoGap;
+  const startX = playerX - totalW / 2;
+  const slotVisual = getAmmoSlotVisualState(i, maxAmmo, currentAmmo);
+  ctx.fillStyle = slotVisual.color;
+  ctx.fillRect(
+   startX + col * (ammoW + ammoGap),
+   ammoTopY + row * (ammoH + ammoGap),
+   ammoW,
+   ammoH
+  );
+ }
+// -------- RELOAD BAR --------
   const firstRowCount = Math.min(maxAmmo, ammoMaxPerRow);
   const ammoRowWidth = firstRowCount * (ammoW + ammoGap) - ammoGap;
   const ammoStartX = playerX - ammoRowWidth / 2;
@@ -3766,9 +4455,42 @@ if (!hideGameplay && mode !== 'map') {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(barX, barY, barWidth * reloadProgress, reloadBarHeight);
 
-  // BULLETS
+  
+// -------- EXPLOSIONS --------
+explosions.forEach(e=>{
+ ctx.save();
+ const t = e.age / e.life;
+ const alpha = 1 - t;
+ ctx.globalAlpha = alpha;
+ // filled glow
+ ctx.fillStyle = 'rgba(255,180,60,' + (0.35*alpha) + ')';
+ ctx.beginPath();
+ ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
+ ctx.fill();
+ // outline
+ ctx.globalAlpha = 1;
+ ctx.strokeStyle = 'rgba(255,140,0,' + (0.9*alpha) + ')';
+ ctx.lineWidth = 3;
+ ctx.beginPath();
+ ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
+ ctx.stroke();
+ ctx.restore();
+});
+// BULLETS
   ctx.fillStyle = '#ffffff';
-  bullets.forEach(b => ctx.fillRect(b.x - 2, b.y, 4, 10));
+
+
+bullets.forEach(b => {
+  ctx.save();
+
+  // ✅ yellow if explosive, otherwise normal color
+  ctx.fillStyle = getProjectileVisualColor(b.shotTags || {});
+
+  // ✅ ALWAYS same size (no debug scaling)
+  ctx.fillRect(b.x - 2, b.y, 4, 10);
+
+  ctx.restore();
+});
 
 // ASTEROIDS
 asteroids.forEach(a => {
@@ -4338,6 +5060,17 @@ function startLevelFromNode(nodeId) {
   activeLevelKey = levelKey;
   activeLevelDef = levelDef;
 
+// ✅ clone node challenges into runtime
+activeChallenges = JSON.parse(JSON.stringify(
+  mapNodeLookup[nodeId].data?.challenges || []
+));
+
+// ✅ initialize state
+activeChallenges.forEach(c => {
+  c.failed = false;
+  c.complete = false;
+});
+
 levelObjectiveComplete = false;
 levelElapsed = 0;
 levelTimer = typeof levelDef.duration === 'number' ? levelDef.duration : 0;
@@ -4386,6 +5119,28 @@ function completeActiveLevel() {
 
   console.log('LEVEL COMPLETE:', activeNodeId, activeLevelKey);
 
+// ✅ evaluate challenge success
+const successfulChallenges = activeChallenges.filter(c => !c.failed);
+
+if (successfulChallenges.length > 0) {
+
+  console.log('CHALLENGE SUCCESS:', successfulChallenges);
+
+  // ✅ generate relic rewards
+  generateRelicChoices();
+
+  // ✅ pause gameplay and open reward
+  isPaused = true;
+
+  // ✅ IMPORTANT: reset level BEFORE switching mode
+  resetActiveLevelState();
+
+  setMode('relic_reward');
+
+  return;
+}
+
+
   resetActiveLevelState();
   returnToMap();
 }
@@ -4423,21 +5178,33 @@ levelTimer = typeof levelDef.duration === 'number' ? levelDef.duration : 0;
    ✅ MODE / NAV + RUN START (REQUIRED FOR DEBUG MENU)
 ========================================================= */
 
+function resetFullRunProgress() {
+  // ✅ XP / progression reset
+  score = 0;
+  logicLevel = 1;
+  levelXP = 0;
+
+  displayLevel = 1;
+  displayXP = 0;
+
+  xpBarState = 'normal';
+  xpFlashTimer = 0;
+  pendingDisplayLevels = 0;
+
+  // ✅ relic/economy reset between runs
+  relics = [];
+  activeRelicChoices = [];
+  relicReplaceCandidate = null;
+  novaShards = 0;
+  playerRelicState.shotCounter = 0;
+  playerRelicState.pierceBonus = 0;
+
+  ui.score.textContent = score;
+  initWeaponState();   // ✅ reset player stats ONLY between runs
+}
+
+
 function resetRunState(){
-
-// ✅ LEVEL / XP RESET
-score = 0;
-logicLevel = 1;
-levelXP = 0;
-
-displayLevel = 1;
-displayXP = 0;
-
-xpBarState = 'normal';
-xpFlashTimer = 0;
-pendingDisplayLevels = 0;
-
-ui.score.textContent = score;
 
   bullets = [];
   fireTimer = 0;
@@ -4452,8 +5219,6 @@ pawns = [];
   enemies = [];
   powerUps = [];
   powerUpSpawnTimer = 60;
-
-  initWeaponState();
 }
 
 function setMode(nextMode){
@@ -4466,6 +5231,38 @@ if (nextMode !== 'perk_select') {
 
   // ✅ We keep status purely as a hidden debug string target (no UI space used)
   if (ui.status) ui.status.textContent = '';
+
+if (nextMode === 'relic_reward') {
+
+  ui.panel.classList.remove('hidden');
+  ui.perkRow.classList.remove('hidden');
+
+  renderRelicUI();
+
+  ui.perk2.focus();
+  setTimeout(ensureFocus, 0);
+
+  return;
+}
+
+if (nextMode === 'relic_replace') {
+
+  if (!relicReplaceCandidate) {
+    setMode('map');
+    return;
+  }
+
+  ui.panel.classList.remove('hidden');
+  ui.perkRow.classList.remove('hidden');
+
+  renderRelicReplaceUI();
+
+  requestAnimationFrame(() => {
+    ui.perk1.focus();
+  });
+
+  return;
+}
 
   // ✅ HUD visibility: show stats during pause + perk screen, hide otherwise
 if (nextMode === 'paused') {
@@ -4488,6 +5285,8 @@ else {
   ui.pauseRow.classList.add('hidden');
   ui.perkRow.classList.add('hidden');
   ui.btnReroll.classList.add('hidden');
+  if (ui.relicPanel) ui.relicPanel.classList.add('hidden');
+  if (ui.mapNodePanel) { ui.mapNodePanel.style.display='none'; ui.mapNodePanel.style.display = 'none'; }
 
 // ✅ NEVER show title/subtitle anymore
 document.getElementById('title').classList.add('hideInPerk');
@@ -4495,6 +5294,13 @@ document.getElementById('subtitle').classList.add('hideInPerk');
 
 
   // ----- MODE ROUTES -----
+  if (nextMode === 'map') {
+    ui.panel.classList.add('hidden');
+    if (ui.mapNodePanel) { ui.mapNodePanel.style.display='flex';
+ ui.mapNodePanel.style.display = 'flex'; ui.mapNodePanel.style.display = 'flex'; renderMapNodePreview(); }
+    return;
+  }
+
   if (nextMode === 'menu') {
     ui.panel.classList.remove('hidden');
     ui.menuRow.classList.remove('hidden');
@@ -4504,6 +5310,8 @@ document.getElementById('subtitle').classList.add('hideInPerk');
   }
 
 if (nextMode === 'debugMenu') {
+ buildDebugRelicDropdown();
+ renderDebugRelicChosen();
   ui.panel.classList.remove('hidden');
   ui.debugRow.classList.remove('hidden');
 
@@ -4517,6 +5325,7 @@ if (nextMode === 'debugMenu') {
   if (nextMode === 'paused') {
     ui.panel.classList.remove('hidden');
     ui.pauseRow.classList.remove('hidden');
+    if (ui.relicPanel) { ui.relicPanel.classList.remove('hidden'); renderRelicPanel(); }
     ui.btnResume.focus();
     setTimeout(ensureFocus, 0);
     return;
@@ -4549,15 +5358,17 @@ if (nextMode === 'perk_select') {
   // all other modes (game/debug_*): hide panel
   ui.panel.classList.add('hidden');
 }
-
 function goToMenu(){
+ activeChallenges=[];
   running = false;
-  resetRunState();
-buildMap();
-initStars();
+
+  resetFullRunProgress(); // ✅ ONLY HERE
+  resetRunState();        // ✅ clears entities
+
+  buildMap();
+  initStars();
   setMode('menu');
 }
-
 function exitToMenu(){
   goToMenu();
 }
@@ -4631,6 +5442,9 @@ function getBarrierWallAnchorY(wallId) {
 ========================================================= */
 
 // ✅ encounter type -> pool of level keys
+/* =========================================================
+   ✅ LEVEL TYPE POOLS / RESOLUTION
+========================================================= */
 const LEVEL_TYPE_POOLS = {
   combat: ['basic_combat'],
   elite: ['a_debug_pawn_test'],
@@ -4671,6 +5485,45 @@ function pickLevelFromType(type) {
   return pool[idx];
 }
 
+
+/* =========================================================
+   ✅ CHALLENGE SYSTEM (NODE GENERATION)
+========================================================= */
+
+/* =========================================================
+   ✅ CHALLENGE SYSTEM
+========================================================= */
+function generateNodeChallenges(node) {
+
+  const challenges = [];
+
+  // ✅ simple flexible pool (expand later)
+  const pool = [
+
+    {
+      id: 'no_hit',
+      desc: 'Take no damage',
+      difficulty: 2
+    },
+
+    {
+      id: 'fast_clear',
+      desc: 'Clear quickly',
+      difficulty: 2,
+      timeLimit: 25
+    }
+
+  ];
+
+  // ✅ randomly choose 1 challenge for now
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+
+  challenges.push({ ...pick });
+
+  return challenges;
+}
+
+
 // ✅ resolve every node once at run start
 function resolveRandomizedNodeLevels() {
   mapNodes.forEach(node => {
@@ -4699,6 +5552,9 @@ function resolveRandomizedNodeLevels() {
 // =====================================
 // ✅ SPAWN REGISTRY (CREATE ONE OBJECT)
 // =====================================
+/* =========================================================
+   ✅ SPAWN REGISTRY
+========================================================= */
 const SpawnRegistry = {
 
 barrier: (job = {}) => {
@@ -4758,6 +5614,9 @@ pawn: (job = {}) => {
 // ✅ PATTERN REGISTRY (CREATE MANY JOBS)
 //     Each pattern returns an array of spawn jobs.
 // =====================================
+/* =========================================================
+   ✅ PATTERN REGISTRY
+========================================================= */
 const PatternRegistry = {
 
   // -----------------------------------
@@ -4926,6 +5785,9 @@ gapWall: (config = {}) => {
 // =====================================
 // ✅ SPAWN MANAGER (GENERIC)
 // =====================================
+/* =========================================================
+   ✅ SPAWN MANAGER
+========================================================= */
 const SpawnManager = {
 
   rules: [],
@@ -4995,6 +5857,7 @@ pendingCounts[job.type] = preCount + 1;
         const patternFunc = PatternRegistry[rule.pattern];
         if (patternFunc) {
           const jobs = patternFunc(rule.config || {});
+;
 jobs.forEach(job => {
   const preCount = pendingCounts[job.type] ?? 0;
   this.executeJob(job, rule);
@@ -5206,6 +6069,9 @@ roll(min, max) {
 /* =================================================================================================================================================================================================================================
    ✅ LEVELS
 ==================================================================================================================================================================================================================================== */
+/* =========================================================
+   ✅ LEVEL DEFINITIONS
+========================================================= */
 const LEVELS = {
 
 a_debug_pawn_test: {
@@ -5543,6 +6409,9 @@ Barrier_Gauntlet: {
   }
 };
 
+/* =========================================================
+   ✅ RUN START / LEVEL ENTRY
+========================================================= */
 function startRun(runMode){
   running = true;
 SpawnManager.init(activeLevelDef?.spawnRules || []);
@@ -5565,12 +6434,15 @@ if (runMode === 'game') {
   ) {
     powerUpSpawnTimer = 10;
   }
-previousMode = runMode
+previousMode = runMode;
   setMode(runMode);
 }
 
 /* =========================================================
    ✅ CORE GAME LOOP (REAL TIME / DELTA TIME + ONSCREEN ERRORS)
+========================================================= */
+/* =========================================================
+   ✅ CORE GAME LOOP
 ========================================================= */
 let lastTime = performance.now();
 let lastRuntimeError = "";
@@ -5586,6 +6458,7 @@ function update(now){
 
     // ✅ movement always ticks
     updateMovement(dt);
+triggerRelicHook('whileActive', dt);
 
     // ✅ perk timeline progress
     if (mode === 'perk_select') {
@@ -5593,6 +6466,7 @@ function update(now){
     }
 
 updateStars(dt);
+updateExplosions(dt);
 updateXPBar(dt);
 updateMapCursor(dt);
 
@@ -5672,6 +6546,16 @@ updateMapCursor(dt);
 if (running && !isPaused) {
 // ✅ track real level runtime
   levelElapsed += dt;
+
+// ✅ challenge timers
+activeChallenges.forEach(c => {
+  if (c.id === 'fast_clear') {
+    if (levelElapsed > c.timeLimit) {
+      c.failed = true;
+    }
+  }
+});
+
 if (activeLevelDef?.spawnRules) {
   SpawnManager.update(dt);
 }
@@ -5829,6 +6713,9 @@ function renderTopUI() {
 // =====================================================
 // ✅ BUILD DEBUG LEVEL DROPDOWN
 // =====================================================
+/* =========================================================
+   ✅ DEBUG MENU HELPERS
+========================================================= */
 function buildDebugLevelDropdown() {
 
   const select = ui.debugLevelSelect;
@@ -5879,11 +6766,82 @@ ui.perk3.addEventListener('click', () => pickPerk(2));
 
 ui.btnReroll.addEventListener('click', rerollPerks);
 
+
+
+// ✅ DEBUG RELIC SELECT SYSTEM
+let debugSelectedRelics = [];
+
+function buildDebugRelicDropdown() {
+ if (!ui.debugRelicSelect) return;
+ ui.debugRelicSelect.innerHTML = '';
+ RELIC_POOL.forEach(r => {
+  const option = document.createElement('option');
+  option.value = r.id;
+  option.textContent = r.name;
+  ui.debugRelicSelect.appendChild(option);
+ });
+ if (RELIC_POOL.length) {
+  ui.debugRelicSelect.value = RELIC_POOL[0].id;
+ }
+}
+
+function toggleDebugRelicFromDropdown() {
+ const id = ui.debugRelicSelect?.value;
+ if (!id) return;
+
+ if (debugSelectedRelics.includes(id)) {
+  debugSelectedRelics = debugSelectedRelics.filter(r => r !== id);
+ } else {
+  if (debugSelectedRelics.length >= MAX_RELICS) return;
+  debugSelectedRelics.push(id);
+ }
+
+ renderDebugRelicChosen();
+}
+
+function renderDebugRelicChosen() {
+ if (!ui.debugRelicChosen) return;
+ if (!debugSelectedRelics.length) {
+  ui.debugRelicChosen.innerHTML = 'None Selected';
+  return;
+ }
+ ui.debugRelicChosen.innerHTML = debugSelectedRelics.map(id => {
+  const relic = RELIC_POOL.find(r => r.id === id);
+  return relic ? relic.name : id;
+ }).join('<br>');
+}
+
 // ✅ Debug menu open
 ui.btnDebug.addEventListener('click', () => {
   if (!DEV_MODE) return;
   setMode('debugMenu');
 });
+
+// =====================================
+// ✅ DEBUG: ADD RELIC TEST
+// Press "9" to add relic
+// =====================================
+document.addEventListener('keydown', (e) => {
+
+  if (!DEV_MODE) return;
+
+  if (e.key === '9') {
+
+    const relic = RELIC_POOL[0];
+
+    if (relics.length >= MAX_RELICS) {
+      console.log('Relic cap reached');
+      return;
+    }
+
+    relics.push(relic);
+
+    if (relic.apply) relic.apply();
+
+    ui.status.textContent = 'DEBUG: Relic Added';
+  }
+});
+
 
 ui.btnDbgLaunch.addEventListener('click', () => {
   const selectedLevel = ui.debugLevelSelect.value;
@@ -5892,9 +6850,21 @@ ui.btnDbgLaunch.addEventListener('click', () => {
   DEBUG_ALLOW_XP = false;
   ui.status.textContent = 'DEBUG: XP OFF (press ` to enable)';
 
-  startLevelDirect(selectedLevel);
+  
+// ✅ APPLY DEBUG RELICS
+relics = [];
+debugSelectedRelics.forEach(id=>{
+  const r = RELIC_POOL.find(x=>x.id===id);
+  if(r){
+    relics.push(r);
+    if(r.apply) r.apply();
+  }
+});
+startLevelDirect(selectedLevel);
+
 });
 
+ui.debugRelicSelect.addEventListener('change', toggleDebugRelicFromDropdown);
 ui.btnDbgBack.addEventListener('click', () => setMode('menu'));
 
 
