@@ -15,7 +15,7 @@
 
   pointer-events: none;
 
-  z-index: 1000; /* ✅ ABOVE FLASH */
+  z-index:4050; /* ✅ ABOVE FLASH */
 }
 
 
@@ -31,7 +31,7 @@
   opacity: 0;
 
   pointer-events: none; /* ✅ important */
-  z-index: 999; /* ✅ ABOVE EVERYTHING */
+  z-index:4040; /* ✅ ABOVE EVERYTHING */
 }
     :root{
       --bg:#000000;
@@ -55,11 +55,15 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
 
-    #app { position: relative; width: 600px; height: 600px; }
+    #app { position: relative; width: 600px; height: 600px; overflow: hidden; }
+.ui-layer { position:absolute; top:0; left:0; width:600px; height:600px; }
+#uiVisualRoot { z-index:3000; pointer-events:none; }
+#uiInteractiveRoot { z-index:5000; pointer-events:auto; }
+#uiInteractiveRoot .hidden { display:none !important; }
     canvas { display:block; width:600px; height:600px; background:var(--bg); }
 
 #hud {
-  position:absolute;
+  position:fixed;
   top:0;
   left:0;
   right:0;
@@ -84,14 +88,15 @@
 }
 
     #panel {
-      position:absolute;
+  pointer-events:auto;
+      position:fixed;
       left:16px; right:16px; bottom:16px;
       background: rgba(16,18,22,0.84);
       border: 1px solid rgba(0,212,255,0.30);
       border-radius: 18px;
       box-shadow: 0 0 22px rgba(0,212,255,0.16);
       padding: 12px;
-  z-index: 2000;
+  z-index: 4100;
     }
 
     #title { margin:0 0 6px 0; font-size:22px; font-weight:900; letter-spacing:0.2px; }
@@ -175,7 +180,8 @@
      ✅ APP SHELL / HUD / PANELS
 ========================================================= -->
 <div id="app">
-  <canvas id="c" width="600" height="600"></canvas>
+  <div id="uiVisualRoot" class="ui-layer">
+<canvas id="c" width="600" height="600"></canvas>
 
 <div id="mapNodePanel" style="
   position:fixed;
@@ -185,8 +191,8 @@
   display:flex;
   flex-direction:column;
   gap:10px;
-  z-index:5000;
-  pointer-events:none;
+  z-index:4200;
+  pointer-events:none; opacity:1;
   background:rgba(0,0,0,0.75);
   border:2px solid #00ffcc;
   border-radius:12px;
@@ -245,8 +251,8 @@
 
 
 </div>
-
-
+  </div>
+  <div id="uiInteractiveRoot" class="ui-layer">
 <div id="panel">
 <p id="title" class="panelText">BUSTED</p>
 <p id="subtitle" class="panelText">Try better at not being bad</p>
@@ -319,6 +325,7 @@
 
 </div>
 </div>
+  </div>
 
 <script>
 /* =========================================================
@@ -338,6 +345,8 @@ const DPAD = {
    ✅ UI REFERENCES
 ========================================================= */
 const ui = {
+ interactiveRoot: document.getElementById('uiInteractiveRoot'),
+ visualRoot: document.getElementById('uiVisualRoot'),
   canvas: document.getElementById('c'),
   topUI: document.getElementById('topUI'),
   score: document.getElementById('score'),
@@ -385,6 +394,11 @@ flash: document.getElementById('flashOverlay'),
 };
 
 const ctx = ui.canvas.getContext('2d', { alpha:true });
+function syncUIRoots(){
+  if (ui.visualRoot) ui.visualRoot.style.pointerEvents = 'none';
+  if (ui.interactiveRoot) ui.interactiveRoot.style.pointerEvents = 'auto';
+}
+syncUIRoots();
 
 /* =========================================================
    ✅ RUNTIME STATE
@@ -1199,7 +1213,7 @@ const PERK_STAT_MULT = {
 // =====================================
 let explosionDamageMultiplier = 2.0; // ✅ DEFAULT = 2x
 let explosionRadiusMultiplier = 1.0;
-const BUILD_VERSION = 'v.0007';
+const BUILD_VERSION = 'v.0015';
 
 // =====================================
 // ✅ BASE PERK VALUES
@@ -4058,7 +4072,7 @@ function renderMapNodePreview() {
     return;
   }
 
-  ui.mapNodePanel.style.display = 'flex';
+  ui.mapNodePanel.style.display = 'flex'; ui.mapNodePanel.style.visibility='visible'; ui.mapNodePanel.style.opacity='1';
   mapUIDebug.panelDisplay = 'flex';
 
 const nodeId = mapPreviewNodeId || mapCurrentNodeId;
@@ -4303,17 +4317,7 @@ ctx.font = '12px monospace';
 ctx.textAlign = 'left';
 
 const debugNode = mapNodeLookup[mapPreviewNodeId || mapCurrentNodeId];
-if (debugNode) {
- ctx.fillText('panel exists: ' + !!ui.mapNodePanel, 10, 465);
- ctx.fillText('typeBox exists: ' + !!ui.mapNodeTypeBox, 10, 480);
- ctx.fillText('relicBox exists: ' + !!ui.mapNodeRelicBox, 10, 495);
- ctx.fillText('typeBox connected: ' + mapUIDebug.typeBoxConnected, 10, 510);
- ctx.fillText('relicBox connected: ' + mapUIDebug.relicBoxConnected, 10, 525);
- ctx.fillText('panel display: ' + mapUIDebug.panelDisplay, 10, 540);
- ctx.fillText('render status: ' + mapUIDebug.lastRenderStatus, 10, 555);
- ctx.fillText('node: ' + debugNode.id, 10, 570);
- ctx.fillText('base type: ' + debugNode.type, 10, 585);
-}
+
 ctx.restore();
 }
 /* =========================================================
@@ -5447,8 +5451,8 @@ document.getElementById('subtitle').classList.add('hideInPerk');
 
   // ----- MODE ROUTES -----
   if (nextMode === 'map') {
-    ui.panel.classList.add('hidden');
-    if (ui.mapNodePanel) { ui.mapNodePanel.style.display = 'flex'; renderMapNodePreview(); }
+    ui.panel.classList.add('hidden'); // UI foundation: panel separate layer
+    if (ui.mapNodePanel) { ui.mapNodePanel.style.display = 'flex'; ui.mapNodePanel.style.visibility='visible'; ui.mapNodePanel.style.opacity='1'; renderMapNodePreview(); }
     return;
   }
 
@@ -5497,7 +5501,7 @@ if (nextMode === 'perk_select') {
   document.getElementById('subtitle').classList.add('hideInPerk');
 
   // ✅ hide the whole panel at first
-  ui.panel.classList.add('hidden');
+  ui.panel.classList.add('hidden'); // UI foundation: panel separate layer
 
   // ✅ hide perk UI at first — warp comes first
   ui.perkRow.classList.add('hidden');
@@ -5507,7 +5511,7 @@ if (nextMode === 'perk_select') {
 }
 
   // all other modes (game/debug_*): hide panel
-  ui.panel.classList.add('hidden');
+  ui.panel.classList.add('hidden'); // UI foundation: panel separate layer
 }
 function goToMenu(){
  activeChallenges=[];
@@ -6228,7 +6232,7 @@ const LEVELS = {
 a_debug_pawn_test: {
   type: 'elite',
   objective: 'survive_timer',
-  duration: 3,
+  duration: 120,
 //120
 
   setup: () => {
@@ -6821,7 +6825,7 @@ function renderTopUI() {
       : '#00d4ff';
 
   ui.topUI.innerHTML = `
-    <div style="position:absolute; top:0; left:0; width:100%;">
+    <div style="position:fixed; top:0; left:0; width:100%;">
 
       <!-- BAR BACKGROUND -->
       <div style="
@@ -6841,7 +6845,7 @@ function renderTopUI() {
 
       <!-- LEVEL TEXT -->
       <div style="
-        position:absolute;
+        position:fixed;
         top:14px;
         left:6px;
         font:14px monospace;
@@ -6853,7 +6857,7 @@ function renderTopUI() {
       <!-- LEVEL UP TEXT -->
       ${mode === 'perk_select' ? `
         <div style="
-          position:absolute;
+          position:fixed;
           top:16px;
           width:100%;
           text-align:center;
