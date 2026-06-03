@@ -55,11 +55,7 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
 
-    #app { position: relative; width: 600px; height: 600px; overflow: hidden; }
-.ui-layer { position:absolute; top:0; left:0; width:600px; height:600px; }
-#uiVisualRoot { z-index:3000; pointer-events:none; }
-#uiInteractiveRoot { z-index:5000; pointer-events:auto; }
-#uiInteractiveRoot .hidden { display:none !important; }
+    #app { position: relative; width: 600px; height: 600px; }
     canvas { display:block; width:600px; height:600px; background:var(--bg); }
 
 #hud {
@@ -180,8 +176,9 @@
      ✅ APP SHELL / HUD / PANELS
 ========================================================= -->
 <div id="app">
-  <div id="uiVisualRoot" class="ui-layer">
-<canvas id="c" width="600" height="600"></canvas>
+<div id="uiRoot" style="position:fixed; top:0; left:0; width:600px; height:600px; pointer-events:none; opacity:1; z-index:4000;">
+
+  <canvas id="c" width="600" height="600"></canvas>
 
 <div id="mapNodePanel" style="
   position:fixed;
@@ -251,8 +248,9 @@
 
 
 </div>
-  </div>
-  <div id="uiInteractiveRoot" class="ui-layer">
+
+
+</div> <!-- uiRoot end -->
 <div id="panel">
 <p id="title" class="panelText">BUSTED</p>
 <p id="subtitle" class="panelText">Try better at not being bad</p>
@@ -324,8 +322,19 @@
 </button>
 
 </div>
-</div>
+<div class="row hidden" id="levelCompleteRow" style="flex-direction: column;">
+  <div id="levelCompleteTitle" style="text-align:center; font-size:20px; font-weight:900;">
+    LEVEL COMPLETE
   </div>
+  <div id="levelCompleteLevelKills" style="margin-top:12px;"></div>
+  <div id="levelCompleteRunKills"></div>
+  <div id="levelCompleteWinStatus" style="margin-top:6px;"></div>
+  <button id="btnLevelContinue" class="focusable" style="margin-top:14px;">
+    Continue
+  </button>
+</div>
+
+</div>
 
 <script>
 /* =========================================================
@@ -345,8 +354,6 @@ const DPAD = {
    ✅ UI REFERENCES
 ========================================================= */
 const ui = {
- interactiveRoot: document.getElementById('uiInteractiveRoot'),
- visualRoot: document.getElementById('uiVisualRoot'),
   canvas: document.getElementById('c'),
   topUI: document.getElementById('topUI'),
   score: document.getElementById('score'),
@@ -372,6 +379,14 @@ mapNodeRelicBox: document.getElementById('mapNodeRelicBox'),
 btnResume: document.getElementById('btnResume'),
 btnExit: document.getElementById('btnExit'),
 
+levelCompleteRow: document.getElementById('levelCompleteRow'),
+levelCompleteTitle: document.getElementById('levelCompleteTitle'),
+levelCompleteLevelKills: document.getElementById('levelCompleteLevelKills'),
+levelCompleteRunKills: document.getElementById('levelCompleteRunKills'),
+levelCompleteWinStatus: document.getElementById('levelCompleteWinStatus'),
+btnLevelContinue: document.getElementById('btnLevelContinue'),
+
+
   panel: document.getElementById('panel'),
   menuRow: document.getElementById('menuRow'),
   debugRow: document.getElementById('debugRow'),
@@ -394,11 +409,6 @@ flash: document.getElementById('flashOverlay'),
 };
 
 const ctx = ui.canvas.getContext('2d', { alpha:true });
-function syncUIRoots(){
-  if (ui.visualRoot) ui.visualRoot.style.pointerEvents = 'none';
-  if (ui.interactiveRoot) ui.interactiveRoot.style.pointerEvents = 'auto';
-}
-syncUIRoots();
 
 /* =========================================================
    ✅ RUNTIME STATE
@@ -427,6 +437,12 @@ let relicReplaceCandidate = null;
 
 let previousMode = 'menu'; // ✅ track mode before perk screen
 let playerLuck = 0;
+let gemDropState = {
+ noDropStreak: 0,
+ trackedKills: 0,
+ pityStep: 0.04,
+ pityCap: 0.28
+};
 let perkEnterBoost = 0;
 let perkWarpRamp = 0;
 let perkTimeline = 0;
@@ -1213,7 +1229,33 @@ const PERK_STAT_MULT = {
 // =====================================
 let explosionDamageMultiplier = 2.0; // ✅ DEFAULT = 2x
 let explosionRadiusMultiplier = 1.0;
-const BUILD_VERSION = 'v.0015';
+const BUILD_VERSION = 'v.0023';
+
+// =====================================
+// ✅ KILL TRACKING SYSTEM
+// =====================================
+let levelKillStats = {};
+let runKillStats = {};
+
+function resetLevelKillStats() {
+  levelKillStats = {};
+}
+
+function registerKill(type) {
+  if (!type) return;
+
+  levelKillStats[type] = (levelKillStats[type] || 0) + 1;
+  runKillStats[type] = (runKillStats[type] || 0) + 1;
+}
+
+function formatKillStats(stats) {
+  const entries = Object.entries(stats);
+  if (!entries.length) return 'None';
+
+  return entries.map(([k, v]) =>
+    `${v} ${k}${v !== 1 ? 's' : ''}`
+  ).join(', ');
+}
 
 // =====================================
 // ✅ BASE PERK VALUES
@@ -1424,15 +1466,18 @@ function applyExplosionDamage(x, y, radius=48, damage=1) {
           t.alive = false;
           enemies.splice(enemies.indexOf(t), 1);
           awardXP(10);
+registerKill(entity?.type || 'enemy');
           triggerRelicHook('onKill', t);
         } else if (pawns.includes(t)) {
           trySpawnPawnGemDrop(t);
           awardXPFromSource('pawn', t);
+registerKill(entity?.type || 'enemy');
           triggerRelicHook('onKill', t);
           pawns.splice(pawns.indexOf(t), 1);
         } else if (missileDrones.includes(t)) {
           missileDrones.splice(missileDrones.indexOf(t), 1);
           awardXPFromSource('missile_drone', t);
+registerKill(entity?.type || 'enemy');
           triggerRelicHook('onKill', t);
         } else if (asteroids.includes(t)) {
           if (t.type === 'heavy_asteroid' && !t.breaking) {
@@ -1525,6 +1570,24 @@ function initWeaponState(){
   reloadTimer = (getReloadTime() / 60) * 0.75;
   fireTimer = 0;
 }
+
+// =====================================
+// ✅ PLAYER RESET FOR LEVEL START
+// =====================================
+function resetPlayerForLevelStart() {
+  const middleLane = Math.floor(GRID_LANES.length / 2);
+  playerLane = middleLane;
+
+  const x = GRID_LANES[middleLane];
+  playerX = x;
+
+  // ✅ force reload state (like run start)
+  fireTimer = 0;
+  ammoInMag = 0;
+  isReloading = true;
+  reloadTimer = (getReloadTime() / 60) * 0.75;
+}
+
 
 // =====================================
 // ✅ APPLY HELPERS
@@ -2421,6 +2484,10 @@ function spawnEnemies(){
         hp: 1,
         maxHp: 1,
         alive: true,
+        gemTier: 'common',
+        gemDropChance: 0.22,
+        forceGemDrop: false,
+        luckyBurstEligible: true,
 
         row: row, // ✅ linked to shared row
 
@@ -2532,7 +2599,7 @@ function handleBulletsVsEnemies(){
     applyImpactEffectsFromBullet(b);
     const keepBullet = !shouldRemoveBulletAfterHit(b, e);
     if (!keepBullet) bullets.splice(bi, 1);
-    if (e.hp <= 0) { e.hp = 0; e.alive = false; enemies.splice(ei, 1); awardXP(10); triggerRelicHook('onKill', e); }
+    if (e.hp <= 0) { e.hp = 0; e.alive = false; enemies.splice(ei, 1); maybeSpawnGemDropFromSource(e, e.type || 'enemy'); registerKill(entity?.type || 'enemy'); triggerRelicHook('onKill', e); }
     break;
    }
   }
@@ -2557,16 +2624,21 @@ const ASTEROID_FALL_SPEED_MIN = 0.35; // "60fps units"
 const ASTEROID_FALL_SPEED_MAX = 0.65; // "60fps units"
 
 // create one asteroid (lane-based)
-function createAsteroid(){
-  return {
+function createAsteroid(config = {}){
+  return applyGemDropProfile({
     type: 'asteroid',
-    x: getRandomLaneX(),
-    y: -20,
-    w: 22,
-    h: 22,
-    hp: 1,
-    fall: randRange(ASTEROID_FALL_SPEED_MIN, ASTEROID_FALL_SPEED_MAX)
-  };
+    x: config.x ?? getRandomLaneX(),
+    y: config.y ?? -20,
+    w: config.w ?? 22,
+    h: config.h ?? 22,
+    hp: config.hp ?? 1,
+    maxHp: config.maxHp ?? (config.hp ?? 1),
+    fall: config.fall ?? randRange(ASTEROID_FALL_SPEED_MIN, ASTEROID_FALL_SPEED_MAX),
+    gemTier: config.gemTier,
+    gemDropChance: config.gemDropChance,
+    forceGemDrop: config.forceGemDrop,
+    luckyBurstEligible: config.luckyBurstEligible
+  }, config.dropSourceType ?? 'asteroid');
 }
 
 // =====================================
@@ -2580,25 +2652,25 @@ function createBarrier(config = {}) {
       : Math.floor(Math.random() * GRID_LANES.length)
   );
 
-  const width = config.w ?? 52;     // ✅ wider than asteroid
+  const width = config.w ?? 52;
   const height = config.h ?? 28;
 
-  return {
+  return applyGemDropProfile({
     type: 'barrier',
-
     laneIndex,
-
     x: config.x ?? GRID_LANES[laneIndex],
     y: config.y ?? -40,
-
     w: width,
     h: height,
-
-    hp: config.hp ?? 20,      // ✅ high durability
-    fall: config.fall ?? 0.75, // ✅ speed
-
-    hitFlash: 0
-  };
+    hp: config.hp ?? 20,
+    maxHp: config.maxHp ?? (config.hp ?? 20),
+    fall: config.fall ?? 0.75,
+    hitFlash: 0,
+    gemTier: config.gemTier,
+    gemDropChance: config.gemDropChance,
+    forceGemDrop: config.forceGemDrop,
+    luckyBurstEligible: config.luckyBurstEligible
+  }, config.dropSourceType ?? 'barrier');
 }
 
 // spawn logic (debug forces asteroid only)
@@ -2668,35 +2740,31 @@ function createHeavyAsteroid(config = {}) {
 
   const w = config.w ?? 80;
   const h = config.h ?? 80;
-
   const x = config.x ?? GRID_LANES[laneIndex];
   const y = config.y ?? -h;
 
-  return {
+  return applyGemDropProfile({
     type: 'heavy_asteroid',
-
     laneIndex: laneIndex,
-
     x: x,
     y: y,
-
     w: w,
     h: h,
-
     hp: config.hp ?? 6,
+    maxHp: config.maxHp ?? (config.hp ?? 6),
     fall: config.fall ?? randRange(0.4, 0.6),
-
     breaking: false,
     breakTimer: 0,
     breakDelay: config.breakDelay ?? 0.2,
-
     rotation: config.rotation ?? (Math.random() * Math.PI * 2),
     spin: config.spin ?? randRange(-0.02, 0.02),
-
-    hitFlash: 0
-  };
+    hitFlash: 0,
+    gemTier: config.gemTier,
+    gemDropChance: config.gemDropChance,
+    forceGemDrop: config.forceGemDrop,
+    luckyBurstEligible: config.luckyBurstEligible
+  }, config.dropSourceType ?? 'heavy_asteroid');
 }
-
 
 
 
@@ -2716,7 +2784,7 @@ function handleBulletsVsAsteroids(){
     if (a.hp <= 0) {
      if (a.type === 'heavy_asteroid' && !a.breaking) { a.breaking = true; a.breakTimer = a.breakDelay ?? 0.2; break; }
      asteroids.splice(ai, 1);
-     if (a.type === 'barrier') awardXPFromSource('barrier', a); else awardXPFromSource('asteroid', a);
+     if (a.type === 'barrier') maybeSpawnGemDropFromSource(a, a.type || 'barrier'); else maybeSpawnGemDropFromSource(a, a.type || 'asteroid');
     }
     break;
    }
@@ -2764,11 +2832,11 @@ function triggerHeavyAsteroidBurst(a){
   // ✅ GEM BURST (tight controlled spread)
   spawnGemBurst(a.x, a.y);
 
-  awardXPFromSource('heavy_asteroid_core', a); // ✅ reward for breaking core
+  maybeSpawnGemDropFromSource(a, 'heavy_asteroid_core'); // ✅ gem reward for breaking core
 }
 
 // =====================================================
-// ✅ GEM BURST (CONTROLLED)
+// ✅ LEGACY GEM BURST HELPER (unused after tier burst refactor)
 // =====================================================
 function spawnGemBurst(x, y){
 
@@ -2813,45 +2881,33 @@ function createMissileDrone(config = {}) {
 
   const hoverY = config.hoverY ?? 110;
 
-  return {
+  return applyGemDropProfile({
     type: 'missile_drone',
-
-    // -----------------------------------
-    // ✅ movement model
-    // lane_track = lane-based for now
-    // future variants can use free_hover later
-    // -----------------------------------
     movementMode: config.movementMode ?? 'lane_track',
-
     laneIndex,
     targetLane: laneIndex,
-
     x: config.x ?? GRID_LANES[laneIndex],
     y: hoverY,
-
     hoverY,
     moveSpeed: config.moveSpeed ?? 10,
-
     w: config.w ?? 26,
     h: config.h ?? 18,
-    hp: config.hp ?? 3, // ✅ fragile base unit
-
-    // -----------------------------------
-    // ✅ firing
-    // -----------------------------------
+    hp: config.hp ?? 3,
+    maxHp: config.maxHp ?? (config.hp ?? 3),
     fireInterval: config.fireInterval ?? 2.2,
     fireTimer: config.fireInterval ?? 2.2,
-
     telegraphDuration: config.telegraphDuration ?? 0.45,
     telegraphTimer: 0,
-
     missileSpeed: config.missileSpeed ?? 0.8,
     missileW: config.missileW ?? 8,
     missileH: config.missileH ?? 16,
-
     hitFlash: 0,
-    rewardXP: config.rewardXP ?? 25
-  };
+    rewardXP: config.rewardXP ?? 25,
+    gemTier: config.gemTier,
+    gemDropChance: config.gemDropChance,
+    forceGemDrop: config.forceGemDrop,
+    luckyBurstEligible: config.luckyBurstEligible
+  }, config.dropSourceType ?? 'missile_drone');
 }
 
 function createEnemyMissile(config = {}) {
@@ -2964,7 +3020,18 @@ function handleBulletsVsMissileDrones() {
     applyImpactEffectsFromBullet(b);
     const keepBullet = !shouldRemoveBulletAfterHit(b, d);
     if (!keepBullet) bullets.splice(bi, 1);
-    if (d.hp <= 0) { missileDrones.splice(di, 1); awardXPFromSource('missile_drone', d); triggerRelicHook('onKill', d); }
+if (d.hp <= 0) {
+
+  d.hp = 0;
+
+  // ✅ ALWAYS do drop FIRST while entity is valid
+  maybeSpawnGemDropFromSource(d, 'missile_drone');
+
+  missileDrones.splice(di, 1);
+
+registerKill(entity?.type || 'enemy');
+  triggerRelicHook('onKill', d);
+}
     break;
    }
   }
@@ -2991,98 +3058,183 @@ function createPawn(config = {}) {
       : Math.floor(Math.random() * GRID_LANES.length)
   );
 
-  // ✅ HP: 1–2 range
   const hp = config.hp ?? (Math.random() < 0.5 ? 1 : 2);
-
-  // ✅ base fall speed
   const baseFall = config.fall ?? 1.25;
-
-  // ✅ ±25% variation
   const speedVariance = 0.75 + Math.random() * 0.5;
 
-  return {
+  return applyGemDropProfile({
     type: 'pawn',
     variant: config.variant ?? 'normal',
-
     laneIndex,
     x: GRID_LANES[laneIndex],
     y: config.y ?? -30,
-
     w: config.w ?? 26,
     h: config.h ?? 26,
-
     hp,
-    maxHp: hp,
-
-    // ✅ APPLY SPEED VARIATION HERE
+    maxHp: config.maxHp ?? hp,
     fall: baseFall * speedVariance,
-
     hitFlash: 0,
-
-    rewardXP: config.rewardXP ?? 20
-  };
+    rewardXP: config.rewardXP ?? 20,
+    gemTier: config.gemTier,
+    gemDropChance: config.gemDropChance,
+    forceGemDrop: config.forceGemDrop,
+    luckyBurstEligible: config.luckyBurstEligible
+  }, config.dropSourceType ?? 'pawn');
 }
 
-function getPawnGemDropChance(pawn) {
-  const hpValue = pawn.maxHp ?? pawn.hp ?? 1;
+// =====================================================
+// ✅ GEM DROP SYSTEM V3
+// Enemy-tier-driven drops + optional forced drop + luck burst.
+// Burst REPLACES the normal drop outcome.
+// =====================================================
+const GEM_TIER_ORDER = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+const GEM_SOURCE_DEFAULTS = {
+ enemy: { gemTier:'common', gemDropChance:0.22, forceGemDrop:false, luckyBurstEligible:true },
+ asteroid: { gemTier:'common', gemDropChance:0.01, forceGemDrop:false, luckyBurstEligible:true },
+ pawn: { gemTier:'common', gemDropChance:0.60, forceGemDrop:false, luckyBurstEligible:true },
+ missile_drone: { gemTier:'rare', gemDropChance:0.72, forceGemDrop:true, luckyBurstEligible:true },
+ barrier: { gemTier:'epic', gemDropChance:0.65, forceGemDrop:true, luckyBurstEligible:true },
+ heavy_asteroid: { gemTier:'epic', gemDropChance:0.55, forceGemDrop:true, luckyBurstEligible:true },
+ heavy_asteroid_core: { gemTier:'legendary', gemDropChance:1.0, forceGemDrop:true, luckyBurstEligible:true }
+};
 
-  // ✅ low HP + low luck = low chance
-  // ✅ high HP + good luck = higher chance
-  let chance =
-    0.04 +                 // small base chance
-    hpValue * 0.08 +       // HP matters a lot
-    playerLuck * 0.15;     // luck improves drop rate
-
-  return clamp(chance, 0.04, 0.85);
+function resetGemDropState() {
+ gemDropState.noDropStreak = 0;
+ gemDropState.trackedKills = 0;
 }
-
-function getPawnGemDropRarity(pawn) {
-  const hpValue = pawn.maxHp ?? pawn.hp ?? 1;
-  const score = hpValue + playerLuck * 2;
-
-  // ✅ simple weighted rarity scaling
-  const roll = Math.random();
-
-  if (score < 2.5) {
-    return roll < 0.85 ? 'uncommon' : 'rare';
-  }
-
-  if (score < 4.0) {
-    if (roll < 0.55) return 'uncommon';
-    if (roll < 0.90) return 'rare';
-    return 'epic';
-  }
-
-  if (score < 6.0) {
-    if (roll < 0.35) return 'uncommon';
-    if (roll < 0.75) return 'rare';
-    if (roll < 0.95) return 'epic';
-    return 'legendary';
-  }
-
-  if (roll < 0.20) return 'uncommon';
-  if (roll < 0.55) return 'rare';
-  if (roll < 0.88) return 'epic';
-  return 'legendary';
+function getGemSourceDefaults(sourceType) {
+ return GEM_SOURCE_DEFAULTS[sourceType] || GEM_SOURCE_DEFAULTS.enemy;
 }
+function getGemTierIndex(tier) {
+ return Math.max(0, GEM_TIER_ORDER.indexOf(tier));
+}
+function getLowerGemTier(tier) {
+ const idx = getGemTierIndex(tier);
+ return idx <= 0 ? 'common' : GEM_TIER_ORDER[idx - 1];
+}
+function applyGemDropProfile(entity, sourceType = 'enemy') {
+ const defaults = getGemSourceDefaults(sourceType);
+entity.gemTier = (entity.gemTier !== undefined && entity.gemTier !== null)
+  ? entity.gemTier
+  : defaults.gemTier;
 
-function trySpawnPawnGemDrop(pawn) {
-  const chance = getPawnGemDropChance(pawn);
+entity.gemDropChance = (entity.gemDropChance !== undefined && entity.gemDropChance !== null)
+  ? entity.gemDropChance
+  : defaults.gemDropChance;
 
-  if (Math.random() > chance) return;
+entity.forceGemDrop = (entity.forceGemDrop !== undefined && entity.forceGemDrop !== null)
+  ? entity.forceGemDrop
+  : defaults.forceGemDrop;
 
-  const rarity = getPawnGemDropRarity(pawn);
-  const gem = createGem(rarity, pawn.fall);
+entity.luckyBurstEligible = (entity.luckyBurstEligible !== undefined && entity.luckyBurstEligible !== null)
+  ? entity.luckyBurstEligible
+  : defaults.luckyBurstEligible;
+ return entity;
+}
+function getEntityGemTier(entity, sourceType = 'enemy') {
+ return entity?.gemTier || getGemSourceDefaults(sourceType).gemTier;
+}
+function getGemDropPityBonus(entity, sourceType = 'enemy') {
+ if (entity?.forceGemDrop || getGemSourceDefaults(sourceType).forceGemDrop) return 0;
+ return clamp(gemDropState.noDropStreak * gemDropState.pityStep, 0, gemDropState.pityCap);
+}
+function getEntityGemDropChance(entity, sourceType = 'enemy') {
+ const merged = applyGemDropProfile(entity || {}, sourceType);
+ const tier = getEntityGemTier(merged, sourceType);
+ const luckScale = {
+  common: 0.10,
+  uncommon: 0.08,
+  rare: 0.05,
+  epic: 0.03,
+  legendary: 0.00
+ }[tier] ?? 0.05;
+ const pityBonus = getGemDropPityBonus(merged, sourceType);
+ return clamp((merged.gemDropChance ?? 0.2) + playerLuck * luckScale + pityBonus, 0.02, 1.0);
+}
+function getLuckyBurstChance(entity, sourceType = 'enemy') {
+ const merged = applyGemDropProfile(entity || {}, sourceType);
+ const tier = getEntityGemTier(merged, sourceType);
+ const tierBonus = {
+  common: 0.00,
+  uncommon: 0.01,
+  rare: 0.02,
+  epic: 0.03,
+  legendary: 0.04
+ }[tier] ?? 0;
+ return clamp(0.03 + playerLuck * 0.08 + tierBonus, 0.03, 0.45);
+}
+function spawnSingleGemAt(entity, rarity, sourceType = 'enemy', offsetX = 0, offsetY = 0) {
+  const gem = createGem(rarity, entity?.fall ?? null);
 
+  const baseX = entity?.x ?? getRandomLaneX();
+  const baseY = entity?.y ?? -20;
 
-  gem.x = pawn.x;
-  gem.y = pawn.y;
+  gem.x = baseX + offsetX;
+  gem.y = baseY + offsetY;
 
   pickups.push(gem);
+  return gem;
+}
+function spawnLuckyBurstDrops(entity, sourceType = 'enemy') {
+  const merged = applyGemDropProfile(entity || {}, sourceType);
+
+  const topTier = getEntityGemTier(merged, sourceType);
+  const lowerTier = getLowerGemTier(topTier);
+
+  const spread = 14;      // horizontal spacing
+  const lift = -8;        // slight upward pop
+
+  // center gem (main reward)
+  spawnSingleGemAt(merged, topTier, sourceType, 0, lift);
+
+  // left + right gems
+  spawnSingleGemAt(merged, lowerTier, sourceType, -spread, 0);
+  spawnSingleGemAt(merged, lowerTier, sourceType, spread, 0);
+}
+function registerGemDropResult(didDrop, didBurst = false) {
+ gemDropState.trackedKills += 1;
+ if (didDrop || didBurst) gemDropState.noDropStreak = 0;
+ else gemDropState.noDropStreak += 1;
+}
+function maybeSpawnGemDropFromSource(entity, sourceType = 'enemy') {
+ const merged = applyGemDropProfile(entity || {}, sourceType);
+ const normalDropSuccess = merged.forceGemDrop || (Math.random() <= getEntityGemDropChance(merged, sourceType));
+ if (!normalDropSuccess) {
+  registerGemDropResult(false, false);
+  return false;
+ }
+ const burst = merged.luckyBurstEligible !== false && (Math.random() <= getLuckyBurstChance(merged, sourceType));
+ if (burst) {
+  spawnLuckyBurstDrops(merged, sourceType);
+  registerGemDropResult(true, true);
+  return true;
+ }
+ spawnSingleGemAt(merged, getEntityGemTier(merged, sourceType), sourceType);
+ registerGemDropResult(true, false);
+ return true;
+}
+function getPawnGemDropChance(pawn) {
+ return getEntityGemDropChance(pawn, 'pawn');
+}
+function getPawnGemDropRarity(pawn) {
+ return getEntityGemTier(pawn, 'pawn');
+}
+function trySpawnPawnGemDrop(pawn) {
+ return maybeSpawnGemDropFromSource(pawn, 'pawn');
 }
 
 function updatePawns(dt) {
   pawns.forEach(p => {
+
+if (p.dead) {
+  p.deathTimer -= dt;
+
+  if (p.deathTimer <= 0) {
+    pawns.splice(pawns.indexOf(p), 1);
+  }
+
+  return;
+}
 
     // ✅ straight downward movement only
     p.y += p.fall * dt * 60;
@@ -3122,7 +3274,14 @@ function handleBulletsVsPawns() {
     applyImpactEffectsFromBullet(b);
     const keepBullet = !shouldRemoveBulletAfterHit(b, p);
     if (!keepBullet) bullets.splice(bi, 1);
-    if (p.hp <= 0) { trySpawnPawnGemDrop(p); awardXPFromSource('pawn', p); triggerRelicHook('onKill', p); pawns.splice(pi, 1); }
+if (p.hp <= 0 && !p.dead) {
+  p.dead = true;
+  p.deathTimer = 0.2;
+
+  trySpawnPawnGemDrop(p);
+  registerKill('pawn');
+  triggerRelicHook('onKill', p);
+}
     break;
    }
   }
@@ -3363,43 +3522,46 @@ let pickupBursts = [];
 let xpTexts = [];
 
 const PICKUP_RARITY = {
-  common:    { color: '#dddddd', xp: 15 },
+  common:    { color: '#ffffff', xp: 10 },
   uncommon:  { color: '#4cff4c', xp: 30 },
   rare:      { color: '#66ccff', xp: 60 },
   epic:      { color: '#b84cff', xp: 120 },
   legendary: { color: '#ff9933', xp: 250 }
 };
 
+const GEM_MIN_FALL = 1;     // minimum readable speed
+const GEM_ACCEL = 0.00001;       // how fast it ramps up
 function createGem(rarity, sourceFall = null) {
+  let inheritedFall;
 
-  let fall;
-
-  // ✅ if dropped by an object → inherit speed
-  if (sourceFall !== null) {
-
-    // 5–10% slower than source
-    const slowdown = 0.90 + Math.random() * 0.05; // 0.90 → 0.95
-
-    fall = sourceFall * slowdown;
+  // ✅ inherit movement when available, otherwise use default pickup spawn speed
+  if (sourceFall !== null && sourceFall !== undefined) {
+    const slowdown = 0.90 + Math.random() * 0.05;
+    inheritedFall = sourceFall * slowdown;
+  } else {
+    inheritedFall = 0.26;
   }
-  else {
-    // ✅ default spawn behavior
-    fall = 0.26;
-  }
+
+  // ✅ generic floor for ALL gem sources
+  const targetFall = Math.max(inheritedFall, GEM_MIN_FALL);
 
   return {
-  type: 'gem',
-  rarity,
-  color: (PICKUP_RARITY[rarity] && PICKUP_RARITY[rarity].color) || '#ffffff',
-  xp: (PICKUP_RARITY[rarity] && PICKUP_RARITY[rarity].xp) || 10,
-
+    type: 'gem',
+    rarity,
+    color: (PICKUP_RARITY[rarity] && PICKUP_RARITY[rarity].color) || '#ffffff',
+    xp: (PICKUP_RARITY[rarity] && PICKUP_RARITY[rarity].xp) || 10,
     x: 0,
     y: 0,
-
     w: 14,
     h: 14,
 
-    fall: fall,
+    // ✅ keep original inherited value for debugging / future tuning
+    fall: inheritedFall,
+
+    // ✅ movement uses a guaranteed readable floor immediately
+    currentFall: targetFall,
+    minFall: GEM_MIN_FALL,
+    targetFall: targetFall,
 
     pulse: Math.random() * Math.PI * 2,
     glow: 0
@@ -3491,10 +3653,21 @@ function updatePickups(dt) {
     }
 
     // =====================================
-    // ✅ DEFAULT PICKUP FALLBACK
     // =====================================
-    p.y += p.fall * dt * 60;
-    if (p.y > playerY) p.passedPlayer = true;
+ // ✅ DEFAULT PICKUP FALLBACK
+ // =====================================
+ // ✅ generic readable-speed stabilizer for ALL gems
+const targetFall = Math.max(p.targetFall ?? 0, p.minFall ?? GEM_MIN_FALL);
+if (p.currentFall < targetFall) {
+  const deficit = targetFall - p.currentFall;
+  const recovery = Math.max(GEM_ACCEL, deficit * 0.18);
+  p.currentFall += recovery * dt * 60;
+  if (p.currentFall > targetFall) p.currentFall = targetFall;
+}
+
+// ✅ movement uses stabilized fall speed
+p.y += p.currentFall * dt * 60;
+if (p.y > playerY) p.passedPlayer = true;
     p.glow = Math.max(0, p.glow - dt * 2);
   });
 
@@ -3967,6 +4140,7 @@ function executeNode(nodeId) {
     activeNodeId = nodeId;
     activeLevelKey = levelKey;
     activeLevelDef = levelDef;
+resetLevelKillStats();
 
     if (levelDef.setup) {
       levelDef.setup();
@@ -5232,7 +5406,8 @@ levelElapsed = 0;
 levelTimer = typeof levelDef.duration === 'number' ? levelDef.duration : 0;
 
   // ✅ start gameplay first (resets arena)
-  startRun('game');
+  resetPlayerForLevelStart();
+ startRun('game');
 
   // ✅ then apply level-specific setup
   if (levelDef.setup) {
@@ -5268,37 +5443,15 @@ if (objective === 'kill_all_enemies') {
 }
 
 function completeActiveLevel() {
+
   if (!activeNodeId) {
     returnToMap();
     return;
   }
 
-  console.log('LEVEL COMPLETE:', activeNodeId, activeLevelKey);
+  const winConditionMet = isActiveLevelComplete();
 
-// ✅ evaluate challenge success
-const successfulChallenges = activeChallenges.filter(c => !c.failed);
-
-if (successfulChallenges.length > 0) {
-
-  console.log('CHALLENGE SUCCESS:', successfulChallenges);
-
-  // ✅ generate relic rewards
-  generateRelicChoices();
-
-  // ✅ pause gameplay and open reward
-  isPaused = true;
-
-  // ✅ IMPORTANT: reset level BEFORE switching mode
-  resetActiveLevelState();
-
-  setMode('relic_reward');
-
-  return;
-}
-
-
-  resetActiveLevelState();
-  returnToMap();
+  showLevelCompleteScreen(winConditionMet);
 }
 
 // =====================================================
@@ -5322,7 +5475,8 @@ levelElapsed = 0;
 levelTimer = typeof levelDef.duration === 'number' ? levelDef.duration : 0;
 
   // ✅ start gameplay core systems
-  startRun('game');
+  resetPlayerForLevelStart();
+ startRun('game');
 
   // ✅ apply level setup AFTER reset
   if (levelDef.setup) {
@@ -5441,6 +5595,13 @@ else {
   ui.pauseRow.classList.add('hidden');
   ui.perkRow.classList.add('hidden');
   ui.btnReroll.classList.add('hidden');
+
+if (ui.levelCompleteRow) {
+  ui.levelCompleteRow.classList.add('hidden');
+}
+
+ui.levelCompleteRow.classList.add('hidden');
+
   if (ui.relicPanel) ui.relicPanel.classList.add('hidden');
 if (ui.mapNodePanel && nextMode !== 'map') { ui.mapNodePanel.style.display = 'none'; }
 
@@ -6232,7 +6393,7 @@ const LEVELS = {
 a_debug_pawn_test: {
   type: 'elite',
   objective: 'survive_timer',
-  duration: 120,
+  duration: 10,
 //120
 
   setup: () => {
@@ -6811,6 +6972,54 @@ buildMap();              // ✅ BUILD MAP ON INITIAL LOAD
 initStars();             // ✅ create stars BEFORE first frame
 setMode('menu');         // ✅ set UI first
 requestAnimationFrame(update); // ✅ THEN start loop
+
+// =====================================
+// ✅ LEVEL COMPLETE SCREEN
+// =====================================
+function showLevelCompleteScreen(winConditionMet) {
+  isPaused = true;
+  running = false;
+
+  const levelKills = formatKillStats(levelKillStats);
+  const runKills = formatKillStats(runKillStats);
+
+  ui.panel.classList.remove('hidden');
+
+  // Hide other row-based panel content
+  ui.menuRow.classList.add('hidden');
+  ui.debugRow.classList.add('hidden');
+  ui.pauseRow.classList.add('hidden');
+  ui.perkRow.classList.add('hidden');
+  ui.btnReroll.classList.add('hidden');
+  if (ui.relicPanel) ui.relicPanel.classList.add('hidden');
+
+  // Show level complete row
+  ui.levelCompleteRow.classList.remove('hidden');
+
+  ui.levelCompleteTitle.textContent = 'LEVEL COMPLETE';
+  ui.levelCompleteLevelKills.textContent = `Level Kills: ${levelKills}`;
+  ui.levelCompleteRunKills.textContent = `Run Kills: ${runKills}`;
+  ui.levelCompleteWinStatus.textContent = `Win Condition: ${winConditionMet ? '✅ MET' : '❌ FAILED'}`;
+
+ui.btnLevelContinue.onclick = () => {
+  // ✅ HARD HIDE level complete screen first
+  ui.levelCompleteRow.classList.add('hidden');
+
+  if (winConditionMet) {
+    generateRelicChoices();
+    resetActiveLevelState();
+    setMode('relic_reward');
+    return;
+  }
+
+  resetActiveLevelState();
+  returnToMap();
+};
+
+  ui.btnLevelContinue.focus();
+  setTimeout(ensureFocus, 0);
+}
+
 
 function renderTopUI() {
 
