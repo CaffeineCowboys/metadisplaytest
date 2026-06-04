@@ -212,10 +212,6 @@
 <div id="topUI"></div>
 
 
-<div id="flashOverlay"></div>
-<div id="topUI"></div>
-
-
 <div id="hud" class="hidden" style="
   display:flex;
   justify-content: space-between;
@@ -235,6 +231,7 @@
     <div class="pill">Score <strong id="score">0</strong></div>
     <div class="pill">Fire Rate <strong id="fd">0</strong></div>
     <div class="pill">Reload <strong id="rt">0</strong></div>
+<div class="pill">HP <strong id="hp">0</strong></div>
 
     <div class="pill">Bullet Velocity <strong id="bs">0</strong></div>
 <div class="pill">Damage <strong id="dmg">0</strong></div>
@@ -354,6 +351,7 @@ const DPAD = {
    ✅ UI REFERENCES
 ========================================================= */
 const ui = {
+hp: document.getElementById('hp'),
   canvas: document.getElementById('c'),
   topUI: document.getElementById('topUI'),
   score: document.getElementById('score'),
@@ -410,11 +408,56 @@ flash: document.getElementById('flashOverlay'),
 
 const ctx = ui.canvas.getContext('2d', { alpha:true });
 
+// =====================================
+// ✅ UI RENDER LAYER (NEW)
+// =====================================
+function renderUI() {
+  const blockUI = UI_STATE.pendingUIReveal;
+
+  // panel
+  ui.panel.classList.toggle('hidden', blockUI || !UI_STATE.panelVisible);
+
+  // HUD
+  ui.hud.classList.toggle('hidden', blockUI || !UI_STATE.hudVisible);
+
+  // perk UI
+  ui.perkRow.classList.toggle('hidden', blockUI || !UI_STATE.perkUIVisible);
+  ui.btnReroll.classList.toggle('hidden', blockUI || !UI_STATE.perkUIVisible);
+
+  // debug
+  ui.debugRow.classList.toggle('hidden', !UI_STATE.debugVisible);
+
+  // map
+  if (ui.mapNodePanel) {
+    ui.mapNodePanel.style.display = UI_STATE.mapVisible ? 'flex' : 'none';
+  }
+}
+
 /* =========================================================
    ✅ RUNTIME STATE
 ========================================================= */
 let hasIMU = false;
 let running = false;
+
+// =====================================
+// ✅ UI STATE SYSTEM (NEW)
+// =====================================
+const UI_STATE = {
+  mode: 'menu',
+
+  panelVisible: false,
+  hudVisible: false,
+  perkUIVisible: false,
+  debugVisible: false,
+  mapVisible: false,
+
+
+  transition: null,
+  transitionTimer: 0,
+
+ pendingUIReveal: false
+
+};
 
 // =====================================
 // ✅ DEV / DEBUG TOGGLE
@@ -432,6 +475,7 @@ if (!DEV_MODE && ui.btnDebug) {
 
 let isPaused = false;
 let mode = 'menu';
+
 let activeRelicChoices = [];
 let relicReplaceCandidate = null;
 
@@ -590,19 +634,23 @@ function getPerkDelta(perk) {
 }
 
 function refreshStatUI() {
-if (previewingPerk) return; // ✅ DO NOT overwrite preview
-const delay = getFireDelay();
-const rps = getFireRateRPS(delay);
+ if (previewingPerk) return; // ✅ DO NOT overwrite preview
 
-ui.fd.textContent = rps.toFixed(2) + 'rps';
-  const vel = getBulletSpeed() * 60;
-ui.bs.textContent = Math.round(vel) + 'm/s';
- const dmg = getBulletDamage();
- ui.dmg.textContent = dmg.toFixed(1);
-  ui.bc.textContent = getMagSize();
-  ui.rt.textContent = (getReloadTime() / 60).toFixed(1) + 's';
-  ui.luck.textContent = (1 + playerLuck).toFixed(2);
-  ui.pickupRadius.textContent = pickupRadiusBase + 'm';
+ // =====================================
+ // ✅ GENERIC STAT UI (FROM STAT_DEFS)
+ // =====================================
+ Object.values(STAT_DEFS).forEach(def => {
+  const el = ui[def.uiKey];
+  if (!el) return;
+
+  const value = def.get();
+  el.textContent = def.format(value);
+ });
+
+ // =====================================
+ // ✅ SPECIAL CASES (NON-STAT-DEFS)
+ // =====================================
+
 }
 
 function clearStatHighlights() {
@@ -616,97 +664,52 @@ previewingPerk = null; // ✅ clear preview
   refreshStatUI();
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
 function highlightPerkPreview(perk) {
-  clearStatHighlights();
-  previewingPerk = perk; // ✅ lock preview AFTER clear
+ clearStatHighlights();
+ previewingPerk = perk; // ✅ lock preview AFTER clear
 
-  if (!perk || !perk.stat) return;
+ if (!perk || !perk.stat) return;
 
-  const rarityColor = getRarityColor(perk.rarity);
-  const delta = getPerkDelta(perk);
+ const rarityColor = getRarityColor(perk.rarity);
+ const delta = getPerkDelta(perk);
 
-  let target = null;
-  let currentDisplay = '';
-  let totalDisplay = '';
+ const def = STAT_DEFS[perk.stat];
+ if (!def) return;
 
-  // ✅ FIRE RATE
-  if (perk.stat === 'fireRate') {
-    target = ui.fd;
+ // ✅ find UI target automatically
+ const target = ui[def.uiKey];
+ if (!target) return;
 
-const currentRps = getFireRate();
-const previewRps = currentRps + delta;
+ // ✅ current + preview values
+ const base = def.get();
+ const preview = def.getPreview(base, delta);
 
-currentDisplay = currentRps.toFixed(2) + 'rps';
-totalDisplay = previewRps.toFixed(2) + 'rps';
-  }
+ // ✅ formatted text
+ const currentDisplay = def.format(base);
+ const totalDisplay = def.format(preview);
 
-  // ✅ CAPACITY
-  if (perk.stat === 'capacity') {
-    target = ui.bc;
+ // ✅ highlight
+ const pill = target.closest('.pill');
+ if (pill) {
+  pill.style.boxShadow =
+   '0 0 10px rgba(255,255,255,0.8), 0 0 20px rgba(0,212,255,0.6)';
+ }
 
-    const currentCap = getMagSize();
-    const previewCap = currentCap + delta;
-
-    currentDisplay = currentCap;
-    totalDisplay = previewCap;
-  }
-
-  // ✅ RELOAD
-  if (perk.stat === 'reload') {
-    target = ui.rt;
-
-    const currentReloadFrames = getReloadTime();
-    const currentReloadSec = (currentReloadFrames / 60).toFixed(1);
-
-    const previewReloadFrames = Math.max(10, currentReloadFrames - delta);
-    const previewReloadSec = (previewReloadFrames / 60).toFixed(1);
-
-currentDisplay = currentReloadSec + 's';
-totalDisplay = previewReloadSec + 's';
-  }
-
-  // ✅ BULLET VELOCITY (future-safe)
-  if (perk.stat === 'bulletVel') {
-    target = ui.bs;
-
-    const currentVel = getBulletSpeed();
-    const previewVel = currentVel + delta;
-
-currentDisplay = Math.round(currentVel * 60) + 'm/s';
-totalDisplay = Math.round(previewVel * 60) + 'm/s';
-  }
-
-  // ✅ LUCK
-  if (perk.stat === 'luck') {
-    target = ui.luck;
-
-    const currentLuck = (1 + playerLuck).toFixed(2);
-    const previewLuck = (1 + playerLuck + delta).toFixed(2);
-
-    currentDisplay = currentLuck;
-    totalDisplay = previewLuck;
-  }
-
-  // ✅ PICKUP RADIUS
-  if (perk.stat === 'pickup') {
-    target = ui.pickupRadius;
-
-    const currentRadius = pickupRadiusBase;
-    const previewRadius = pickupRadiusBase + delta;
-
-currentDisplay = currentRadius + 'm';
-totalDisplay = previewRadius + 'm';
-  }
-
-  if (!target) return;
-
-  const pill = target.closest('.pill');
-  if (pill) {
-    pill.style.boxShadow =
-      '0 0 10px rgba(255,255,255,0.8), 0 0 20px rgba(0,212,255,0.6)';
-  }
-
-  target.innerHTML = `${currentDisplay} | <span style="color:${rarityColor};">${totalDisplay}</span>`;
+ // ✅ update text
+ target.innerHTML =
+  `${currentDisplay} <span style="color:${rarityColor};">${totalDisplay}</span>`;
 }
 
 // ✅ clear highlight when leaving perk UI
@@ -729,6 +732,13 @@ document.addEventListener('keydown', (e) => {
 //     Always pull from central perk values
 // =====================================
 if (DEV_MODE) {
+
+// ✅ DEBUG: DAMAGE PLAYER
+if (e.key === '0') {
+  applyDamageToTarget(playerHealthState, 1, { type: 'debug' });
+  ui.status.textContent = 'DEBUG: Player Damaged';
+  return;
+}
 
   // ✅ Fire Rate = uncommon fire rate perk
   if (e.key === '1') {
@@ -1052,6 +1062,102 @@ function clampLane(i){
 ========================================================= */
 let playerY = 540;
 
+// =====================================================
+// ✅ PLAYER HEALTH SYSTEM (SEGMENTED REGEN MODEL)
+// =====================================================
+const HEALTH_CONFIG = {
+  startSegments: 3,
+  regenDelay: 2.0,              // seconds after taking a hit
+  regenPerSecond: 0.005,         // fills one segment in ~2.86s
+  regenMode: 'one_segment',     // 'one_segment' | 'continuous'
+  segmentWidth: 100,
+  segmentHeight: 3,
+  segmentDividerWidth: 2,
+  barPadding: 2,
+  barBottomOffset: 12,
+  colorFull: '#ff3355',
+  colorRegen: '#ff8888',
+  colorBack: 'rgba(255,255,255,0.12)',
+  colorBorder: 'rgba(255,255,255,0.18)',
+  colorDivider: 'rgba(0,0,0,0.55)'
+};
+
+let playerHealthState = {
+  maxSegments: HEALTH_CONFIG.startSegments,
+  filledSegments: HEALTH_CONFIG.startSegments, // fully locked segments
+  refillProgress: 0,                           // 0 → 1 for next segment only
+  regenDelayTimer: 0,
+  regenEnabled: true,
+  invulnTimer: 0,
+  invulnDuration: 0.35
+};
+
+// =====================================
+// ✅ HEALTH HELPERS
+// =====================================
+function getEffectiveHealthValue() {
+  return playerHealthState.filledSegments + playerHealthState.refillProgress;
+}
+
+function getLockedHealthSegments() {
+  return playerHealthState.filledSegments;
+}
+
+function getMissingHealthSegments() {
+  return Math.max(0, playerHealthState.maxSegments - playerHealthState.filledSegments);
+}
+
+function canRegenHealth() {
+  const p = playerHealthState;
+  if (!p.regenEnabled) return false;
+  if (p.regenDelayTimer > 0) return false;
+  if (p.filledSegments >= p.maxSegments) return false;
+
+  // ✅ one_segment mode stops after one segment total has been refilled
+  if (HEALTH_CONFIG.regenMode === 'one_segment' && p.refillProgress <= 0) {
+    const hasAnyMissing = p.filledSegments < p.maxSegments;
+    if (!hasAnyMissing) return false;
+  }
+
+  return true;
+}
+
+function resetPlayerHealth(fullHeal = true) {
+  playerHealthState.maxSegments = HEALTH_CONFIG.startSegments;
+  playerHealthState.filledSegments = HEALTH_CONFIG.startSegments;
+  playerHealthState.refillProgress = 0;
+  playerHealthState.regenDelayTimer = 0;
+  playerHealthState.regenEnabled = true;
+  playerHealthState.invulnTimer = 0;
+
+  if (!fullHeal) {
+    playerHealthState.filledSegments = Math.max(1, playerHealthState.filledSegments);
+  }
+}
+
+function healPlayerSegments(amount = 1) {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  const p = playerHealthState;
+  p.filledSegments = Math.min(p.maxSegments, p.filledSegments + Math.floor(amount));
+  if (p.filledSegments >= p.maxSegments) {
+    p.refillProgress = 0;
+  }
+}
+
+function increasePlayerMaxHealth(amount = 1, alsoFill = true) {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  const whole = Math.floor(amount);
+  if (whole <= 0) return;
+
+  playerHealthState.maxSegments += whole;
+  if (alsoFill) {
+    playerHealthState.filledSegments = Math.min(
+      playerHealthState.maxSegments,
+      playerHealthState.filledSegments + whole
+    );
+  }
+}
+
 // ✅ lane-based player state
 let playerLane = Math.floor(GRID_COLS / 2);
 let playerX = GRID_LANES[playerLane];
@@ -1216,6 +1322,7 @@ function lcDebugLog(msg) {
 const GLOBAL_PERK_MULT = 1.0;
 
 const PERK_STAT_MULT = {
+damage: 1.0,
   fireRate: 2.5,
   bulletVel: 1.0,
   capacity: 1.0,
@@ -1224,6 +1331,143 @@ const PERK_STAT_MULT = {
   pickup: 1.0
 };
 
+
+
+
+
+
+
+
+
+// =====================================
+// ✅ STAT DEFINITIONS (NEW CORE SYSTEM)
+// =====================================
+const STAT_DEFS = {
+
+health: {
+ id: 'health',
+ uiKey: 'hp',
+ label: 'Health',
+ get: () => ({
+   locked: playerHealthState.filledSegments,
+   max: playerHealthState.maxSegments
+ }),
+ format: (v) => `${Math.round(v.locked)}/${Math.round(v.max)}`,
+ getPreview: (base, delta) => ({
+   locked: base.locked + delta,
+   max: base.max + delta
+ }),
+ apply: (v) => {
+   const whole = Math.max(1, Math.round(v));
+   increasePlayerMaxHealth(whole, true);
+ }
+},
+
+ fireRate: {
+  id: 'fireRate',
+  uiKey: 'fd',
+  label: 'Fire Rate',
+  get: () => getFireRate(),
+  format: (v) => v.toFixed(2) + 'rps',
+  getPreview: (base, delta) => base + delta,
+  apply: (v) => applyFireRateBoost(v),
+  powerUp: {
+   label: 'FR',
+   getValue: () => randRange(5, 15),
+   formatValue: (v) => "+" + Math.round(v)
+  }
+ },
+
+ bulletVel: {
+  id: 'bulletVel',
+  uiKey: 'bs',
+  label: 'Bullet Velocity',
+  get: () => getBulletSpeed(),
+  format: (v) => Math.round(v * 60) + 'm/s',
+  getPreview: (base, delta) => base + delta,
+  apply: (v) => applyBulletVelocityBoost(v),
+  powerUp: {
+   label: 'BV',
+   getValue: () => randRange(0.5, 1.5),
+   formatValue: (v) => "+" + v.toFixed(1)
+  }
+ },
+
+ capacity: {
+  id: 'capacity',
+  uiKey: 'bc',
+  label: 'Capacity',
+  get: () => getMagSize(),
+  format: (v) => Math.round(v),
+  getPreview: (base, delta) => base + delta,
+  apply: (v) => applyCapacityBoost(v),
+  powerUp: {
+   label: 'CP',
+   getValue: () => randInt(1, 2),
+   formatValue: (v) => "+" + v
+  }
+ },
+
+ reload: {
+  id: 'reload',
+  uiKey: 'rt',
+  label: 'Reload',
+  get: () => getReloadTime(),
+  format: (v) => (v / 60).toFixed(1) + 's',
+  getPreview: (base, delta) => Math.max(10, base - delta),
+  apply: (v) => applyReloadBoost(v),
+  powerUp: {
+   label: 'RL',
+   getValue: () => randRange(20, 60),
+   formatValue: (v) => "-" + Math.round(v)
+  }
+ },
+
+ luck: {
+  id: 'luck',
+  uiKey: 'luck',
+  label: 'Luck',
+  get: () => playerLuck,
+  format: (v) => (1 + v).toFixed(2),
+  getPreview: (base, delta) => base + delta,
+  apply: (v) => { playerLuck += v; },
+  powerUp: {
+   label: 'LK',
+   getValue: () => randRange(0.1, 0.3),
+   formatValue: (v) => "+" + v.toFixed(2)
+  }
+ },
+
+ pickup: {
+  id: 'pickup',
+  uiKey: 'pickupRadius',
+  label: 'Pickup Radius',
+  get: () => pickupRadiusBase,
+  format: (v) => Math.round(v) + 'm',
+  getPreview: (base, delta) => base + delta,
+  apply: (v) => { pickupRadiusBase += v; },
+  powerUp: {
+   label: 'PR',
+   getValue: () => randRange(10, 30),
+   formatValue: (v) => "+" + Math.round(v)
+  }
+ },
+
+damage: {
+  id: 'damage',
+  uiKey: 'dmg',
+  label: 'Damage',
+
+  get: () => getBulletDamage(),
+
+  format: (v) => v.toFixed(1),
+
+  getPreview: (base, delta) => base + delta,
+
+  apply: (v) => { weapon.bonusDamage += v; }
+ }
+
+};
 // =====================================
 // ✅ EXPLOSION DAMAGE SYSTEM
 // =====================================
@@ -1257,10 +1501,27 @@ function formatKillStats(stats) {
   ).join(', ');
 }
 
+
+
+
+
+
+
+
+
 // =====================================
 // ✅ BASE PERK VALUES
 // =====================================
 const PERK_VALUES = {
+
+damage: {
+  common: 0.5,
+  uncommon: 1.0,
+  rare: 1.5,
+  epic: 2.5,
+  legendary: 4.0
+ },
+
   fireRate: {
     common: 0.15,
     uncommon: 0.30,
@@ -1463,35 +1724,14 @@ function applyExplosionDamage(x, y, radius=48, damage=1) {
         t.hp = 0;
 
         if (enemies.includes(t)) {
-          t.alive = false;
-          enemies.splice(enemies.indexOf(t), 1);
-          awardXP(10);
-registerKill(entity?.type || 'enemy');
-          triggerRelicHook('onKill', t);
+processDeath(t, null);
         } else if (pawns.includes(t)) {
-          trySpawnPawnGemDrop(t);
-          awardXPFromSource('pawn', t);
-registerKill(entity?.type || 'enemy');
-          triggerRelicHook('onKill', t);
-          pawns.splice(pawns.indexOf(t), 1);
+processDeath(t, null);
         } else if (missileDrones.includes(t)) {
-          missileDrones.splice(missileDrones.indexOf(t), 1);
-          awardXPFromSource('missile_drone', t);
-registerKill(entity?.type || 'enemy');
-          triggerRelicHook('onKill', t);
+processDeath(t, null);
         } else if (asteroids.includes(t)) {
-          if (t.type === 'heavy_asteroid' && !t.breaking) {
-            t.breaking = true;
-            t.breakTimer = t.breakDelay ?? 0.2;
-          } else {
-            asteroids.splice(asteroids.indexOf(t), 1);
-            if (t.type === 'barrier') {
-              awardXPFromSource('barrier', t);
-            } else {
-              awardXPFromSource('asteroid', t);
-            }
-          }
-        }
+ processDeath(t, null);
+}
       }
     }
   });
@@ -1562,7 +1802,6 @@ function initWeaponState(){
   weapon.bonusMagSize = 0;
   weapon.bonusReloadTime = 0;
   weapon.bonusDamage = 0;
- weapon.bonusDamage = 0;
 
   // ✅ then reset weapon runtime state
   ammoInMag = 0;
@@ -1577,15 +1816,17 @@ function initWeaponState(){
 function resetPlayerForLevelStart() {
   const middleLane = Math.floor(GRID_LANES.length / 2);
   playerLane = middleLane;
-
   const x = GRID_LANES[middleLane];
   playerX = x;
 
-  // ✅ force reload state (like run start)
   fireTimer = 0;
   ammoInMag = 0;
   isReloading = true;
   reloadTimer = (getReloadTime() / 60) * 0.75;
+
+  // ✅ DO NOT reset health here anymore
+  // ✅ only clear invulnerability timer so you don’t spawn invincible
+  playerHealthState.invulnTimer = 0;
 }
 
 
@@ -1596,6 +1837,672 @@ function resetPlayerForLevelStart() {
    ✅ STAT APPLY HELPERS
 ========================================================= */
 function applyFireRateBoost(v){ weapon.bonusFireRate += v; }
+
+
+// =====================================
+// ✅ ENTITY DEFINITIONS (PHASE 1: REWARDS ONLY)
+// =====================================
+const ENTITY_DEFS = {
+
+enemy: {
+  update: (e, dt) => {
+    if (!e.alive) return;
+
+    const r = enemyRows[e.row];
+
+    // fall
+    e.y += 0.35 * dt * 60;
+
+    // telegraph phase
+    if (r.state === 'telegraph') {
+      e.telegraphTimer = r.telegraphTimer;
+      e.shiftDir = r.shiftDir;
+      e.willShift = true;
+    }
+
+    // apply lane move
+    else if (r.state === 'idle' && e.willShift) {
+
+      const minLane = e.homeLane - e.swingRange;
+      const maxLane = e.homeLane + e.swingRange;
+
+      let newLane = e.targetLane + e.shiftDir;
+
+      if (newLane < minLane || newLane > maxLane) {
+        newLane = e.targetLane;
+      } else {
+        e.targetLane = newLane;
+        e.targetX = GRID_LANES[newLane];
+      }
+
+      e.willShift = false;
+    }
+
+    // smooth X movement
+    e.x += (e.targetX - e.x) * Math.min(1, 12 * dt);
+
+    // reset if offscreen
+    if (e.y > 610) {
+      e.y = 80 + e.row * 70;
+      e.targetLane = e.homeLane;
+      e.x = GRID_LANES[e.homeLane];
+      e.targetX = e.x;
+      e.telegraphTimer = 0;
+      e.willShift = false;
+      e.shiftDir = 0;
+    }
+  },
+
+render: (e, ctx) => {
+ if (!e.alive) return;
+
+ ctx.save();
+
+ const dx = e.targetX - e.x;
+
+ // ✅ position
+ ctx.translate(e.x, e.y);
+
+ // ✅ tilt
+ ctx.rotate(dx * 0.01);
+
+ // ✅ telegraph pulse
+ if (e.telegraphTimer > 0) {
+  const pulse = 1 + Math.sin(performance.now() * 0.02) * 0.2;
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = '#ff8888';
+ } else {
+  ctx.fillStyle = '#ff3355';
+ }
+
+ // ✅ body
+ ctx.fillRect(-e.w / 2, -e.h / 2, e.w, e.h);
+
+ // ✅ shift direction arrow
+ if (e.telegraphTimer > 0 && e.willShift) {
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.globalAlpha = 0.9;
+
+  const offsetY = -18;
+
+  if (e.shiftDir === -1) {
+   ctx.beginPath();
+   ctx.moveTo(-6, offsetY);
+   ctx.lineTo(6, offsetY - 6);
+   ctx.lineTo(6, offsetY + 6);
+   ctx.closePath();
+   ctx.fill();
+  } else if (e.shiftDir === 1) {
+   ctx.beginPath();
+   ctx.moveTo(6, offsetY);
+   ctx.lineTo(-6, offsetY - 6);
+   ctx.lineTo(-6, offsetY + 6);
+   ctx.closePath();
+   ctx.fill();
+  }
+
+  ctx.restore();
+ }
+
+ ctx.restore();
+},
+
+
+  onDeath: (entity) => {
+    // no special behavior
+  },
+
+  remove: (entity) => {
+    const idx = enemies.indexOf(entity);
+    if (idx !== -1) enemies.splice(idx, 1);
+  },
+
+  reward: (entity) => {
+    maybeSpawnGemDropFromSource(entity, 'enemy');
+    awardXP(10);
+  }
+},
+
+
+pawn: {
+  update: (p, dt) => {
+    if (p.dead) {
+      p.deathTimer -= dt;
+      return;
+    }
+
+    // movement
+    p.y += p.fall * dt * 60;
+
+    // hit flash fade
+    if (p.hitFlash > 0) {
+      p.hitFlash -= dt * 6;
+      if (p.hitFlash < 0) p.hitFlash = 0;
+    }
+  },
+
+  render: (p, ctx) => {
+    ctx.save();
+
+    const flash = p.hitFlash || 0;
+
+    let bodyR = 255;
+    let bodyG = 120 + flash * 100;
+    let bodyB = 120 + flash * 100;
+
+    if (bodyG > 255) bodyG = 255;
+    if (bodyB > 255) bodyB = 255;
+
+    // main body
+    ctx.fillStyle = `rgba(${bodyR},${bodyG},${bodyB},0.95)`;
+    ctx.fillRect(p.x - p.w / 2, p.y - p.h / 2, p.w, p.h);
+
+    // inner core
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(p.x - 5, p.y - 5, 10, 10);
+
+    // HP pips
+    const pipSize = 3;
+    const pipGap = 2;
+    ctx.fillStyle = '#ffffff';
+
+    for (let i = 0; i < p.hp; i++) {
+      ctx.fillRect(
+        p.x - ((p.hp * (pipSize + pipGap) - pipGap) / 2) + i * (pipSize + pipGap),
+        p.y + p.h / 2 + 4,
+        pipSize,
+        pipSize
+      );
+    }
+
+    ctx.restore();
+  },
+
+  onDeath: (entity) => {
+    if (!entity.dead) {
+      entity.dead = true;
+      entity.deathTimer = 0.2;
+    }
+  },
+
+  remove: (entity) => {
+    const idx = pawns.indexOf(entity);
+    if (idx !== -1) pawns.splice(idx, 1);
+  },
+
+  reward: (entity) => {
+    trySpawnPawnGemDrop(entity);
+    awardXPFromSource('pawn', entity);
+  }
+},
+
+missile_drone: {
+  update: (d, dt) => {
+
+    // lock hover height
+    d.y = d.hoverY;
+
+    // lane tracking
+    if (d.movementMode === 'lane_track') {
+      d.targetLane = playerLane;
+      const targetX = GRID_LANES[d.targetLane];
+      d.x += (targetX - d.x) * Math.min(1, d.moveSpeed * dt);
+    }
+
+    // hit flash
+    if (d.hitFlash > 0) {
+      d.hitFlash -= dt * 6;
+      if (d.hitFlash < 0) d.hitFlash = 0;
+    }
+
+    // firing logic
+    if (d.telegraphTimer > 0) {
+      d.telegraphTimer -= dt;
+
+      if (d.telegraphTimer <= 0) {
+        fireDroneMissile(d);
+        d.fireTimer = d.fireInterval;
+      }
+    }
+    else {
+      d.fireTimer -= dt;
+
+      if (d.fireTimer <= 0) {
+        d.telegraphTimer = d.telegraphDuration;
+      }
+    }
+  },
+
+render: (d, ctx) => {
+  ctx.save();
+
+  const telegraphing = d.telegraphTimer > 0;
+  const flash = telegraphing
+    ? (0.6 + Math.sin(performance.now() * 0.03) * 0.4)
+    : 0;
+
+  // main body
+  let bodyR = 120 + d.hitFlash * 100;
+  let bodyG = 180 + d.hitFlash * 60;
+  let bodyB = 255;
+
+  if (bodyR > 255) bodyR = 255;
+  if (bodyG > 255) bodyG = 255;
+
+  ctx.fillStyle = `rgba(${bodyR},${bodyG},${bodyB},0.95)`;
+
+  ctx.beginPath();
+  ctx.moveTo(d.x, d.y - d.h / 2);
+  ctx.lineTo(d.x + d.w / 2, d.y);
+  ctx.lineTo(d.x, d.y + d.h / 2);
+  ctx.lineTo(d.x - d.w / 2, d.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // telegraph glow
+  if (telegraphing) {
+    ctx.strokeStyle = `rgba(255,80,80,${flash})`;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(d.x - d.w / 2 - 3, d.y - d.h / 2 - 3, d.w + 6, d.h + 6);
+  }
+
+  // HP pips
+  const pipSize = 3;
+  const pipGap = 2;
+  ctx.fillStyle = '#ffffff';
+
+  for (let i = 0; i < d.hp; i++) {
+    ctx.fillRect(
+      d.x - ((d.hp * (pipSize + pipGap) - pipGap) / 2) + i * (pipSize + pipGap),
+      d.y + d.h / 2 + 4,
+      pipSize,
+      pipSize
+    );
+  }
+
+  ctx.restore();
+},
+
+  onDeath: (entity) => {},
+
+  remove: (entity) => {
+    const idx = missileDrones.indexOf(entity);
+    if (idx !== -1) missileDrones.splice(idx, 1);
+  },
+
+  reward: (entity) => {
+    maybeSpawnGemDropFromSource(entity, 'missile_drone');
+    awardXPFromSource('missile_drone', entity);
+  }
+},
+
+ asteroid: {
+
+update: (a, dt) => {
+  a.y += a.fall * dt * 60;
+},
+
+  onDeath: (entity) => {
+   // normal asteroid
+  },
+
+  remove: (entity) => {
+   const idx = asteroids.indexOf(entity);
+   if (idx !== -1) asteroids.splice(idx, 1);
+  },
+
+  reward: (entity) => {
+   maybeSpawnGemDropFromSource(entity, 'asteroid');
+   awardXPFromSource('asteroid', entity);
+  }
+ },
+
+ barrier: {
+  onDeath: (entity) => {
+   // no special behavior
+  },
+
+  remove: (entity) => {
+   const idx = asteroids.indexOf(entity);
+   if (idx !== -1) asteroids.splice(idx, 1);
+  },
+
+  reward: (entity) => {
+   maybeSpawnGemDropFromSource(entity, 'barrier');
+   awardXPFromSource('barrier', entity);
+  }
+ },
+
+ heavy_asteroid: {
+  onDeath: (entity) => {
+   if (!entity.breaking) {
+    entity.breaking = true;
+    entity.breakTimer = entity.breakDelay ?? 0.2;
+   }
+  },
+
+  remove: (entity) => {
+   // ✅ only remove AFTER breaking completes
+   const idx = asteroids.indexOf(entity);
+   if (idx !== -1) asteroids.splice(idx, 1);
+  },
+
+  reward: () => {
+   // handled separately (core burst)
+  }
+ }
+
+};
+
+
+
+
+
+// =====================================
+// ✅ DAMAGE / DEATH PIPELINE (PHASE 1)
+// =====================================
+
+function updateEntities(dt) {
+
+  const groups = [
+    enemies,
+    pawns,
+    missileDrones,
+    asteroids
+  ];
+
+  for (let g = 0; g < groups.length; g++) {
+
+    const list = groups[g];
+
+    for (let i = 0; i < list.length; i++) {
+
+      const entity = list[i];
+      if (!entity) continue;
+
+      const type = entity.type || 'enemy';
+      const def = ENTITY_DEFS[type];
+
+      if (def && typeof def.update === 'function') {
+        def.update(entity, dt);
+      }
+    }
+  }
+}
+
+function handleEntityCollisions() {
+  handleBulletsVsEnemies();
+  handleBulletsVsAsteroids();
+  handleBulletsVsMissileDrones();
+  handleBulletsVsPawns();
+}
+
+function cleanupEntities() {
+  pawns = pawns.filter(p => p.y < 640);
+  asteroids = asteroids.filter(a => a.y < 640 && !a._destroy);
+}
+
+// ✅ MAIN ENTRY
+function applyDamage(target, bullet) {
+ if (!target || typeof target.hp !== 'number') return;
+
+ const damage = bullet?.damage ?? 1;
+
+ target.hp -= damage;
+
+ // ✅ existing effect system stays
+ applyImpactEffectsFromBullet(bullet);
+
+ // ✅ handle death
+ if (target.hp <= 0) {
+  processDeath(target, bullet);
+ }
+}
+
+// =====================================================
+// ✅ GENERIC DAMAGE ENTRY (PLAYER + ENTITIES)
+// =====================================================
+function applyDamageToTarget(target, amount, source = null) {
+  if (!target) return;
+
+  // ✅ route player separately
+  if (target === playerHealthState) {
+    applyDamageToPlayer(amount, source);
+    return;
+  }
+
+  // ✅ fallback to normal entity system
+  const fakeBullet = { damage: amount };
+  applyDamage(target, fakeBullet);
+}
+
+// =====================================================
+// ✅ PLAYER DAMAGE PIPELINE
+// =====================================================
+function applyDamageToPlayer(amount, source) {
+  const p = playerHealthState;
+
+  // ✅ invulnerability window
+  if (p.invulnTimer > 0) return;
+
+  let remaining = amount;
+
+  // -------------------------------------
+  // ✅ SHIELD LAYER
+  // -------------------------------------
+  if (p.shield > 0) {
+    const absorbed = Math.min(p.shield, remaining);
+    p.shield -= absorbed;
+    remaining -= absorbed;
+  }
+
+  // -------------------------------------
+  // ✅ TEMP HP LAYER
+  // -------------------------------------
+  if (remaining > 0 && p.tempHp > 0) {
+    const absorbed = Math.min(p.tempHp, remaining);
+    p.tempHp -= absorbed;
+    remaining -= absorbed;
+  }
+
+  // -------------------------------------
+  // ✅ REAL HP
+  // -------------------------------------
+  if (remaining > 0) {
+    p.hp -= remaining;
+  }
+
+  // ✅ relic hook
+  triggerRelicHook('onPlayerHit', {
+    amount,
+    source
+  });
+
+  // ✅ set invulnerability
+  p.invulnTimer = p.invulnDuration;
+
+  // ✅ DEATH CHECK
+  if (p.hp <= 0) {
+    handlePlayerDeath();
+  }
+}
+
+// =====================================================
+// ✅ GENERIC DAMAGE ENTRY (PLAYER + ENTITIES)
+// =====================================================
+function applyDamageToTarget(target, amount, source = null) {
+  if (!target) return;
+
+  if (target === playerHealthState) {
+    applyDamageToPlayer(amount, source);
+    return;
+  }
+
+  const fakeBullet = { damage: amount };
+  applyDamage(target, fakeBullet);
+}
+
+// =====================================================
+// ✅ PLAYER DAMAGE PIPELINE (SEGMENT MODEL)
+// =====================================================
+function applyDamageToPlayer(amount = 1, source = null) {
+  const p = playerHealthState;
+  if (p.invulnTimer > 0) return;
+
+  const hits = Math.max(1, Math.floor(amount));
+
+  // ✅ remove full locked segments only
+  p.filledSegments = Math.max(0, p.filledSegments - hits);
+
+  // ✅ preserve partial refill exactly as requested
+  // p.refillProgress stays untouched
+
+  // ✅ pause regen
+  p.regenDelayTimer = HEALTH_CONFIG.regenDelay;
+
+  // ✅ short invuln window
+  p.invulnTimer = p.invulnDuration;
+
+  triggerRelicHook('onPlayerHit', {
+    amount: hits,
+    source
+  });
+
+  // ✅ IMPORTANT:
+  // if no FULL segment remains, player dies
+  // partial refill does NOT count as survivable health
+  if (p.filledSegments <= 0) {
+    handlePlayerDeath();
+  }
+}
+
+// =====================================================
+// ✅ PLAYER HEALTH UPDATE
+// =====================================================
+function updatePlayerHealth(dt) {
+// ✅ REGEN ONLY IN ACTIVE GAMEPLAY
+if (mode !== 'game' || !running || isPaused) {
+  return;
+}
+  const p = playerHealthState;
+
+  if (p.invulnTimer > 0) {
+    p.invulnTimer -= dt;
+    if (p.invulnTimer < 0) p.invulnTimer = 0;
+  }
+
+  if (p.regenDelayTimer > 0) {
+    p.regenDelayTimer -= dt;
+    if (p.regenDelayTimer < 0) p.regenDelayTimer = 0;
+    return;
+  }
+
+  if (!p.regenEnabled) return;
+  if (p.filledSegments >= p.maxSegments) {
+    p.refillProgress = 0;
+    return;
+  }
+
+  // =====================================
+  // ✅ ONE SEGMENT TOTAL (default behavior)
+  // =====================================
+  if (HEALTH_CONFIG.regenMode === 'one_segment') {
+    if (p.refillProgress >= 1) return;
+
+    p.refillProgress += HEALTH_CONFIG.regenPerSecond * dt;
+
+    if (p.refillProgress >= 1) {
+      p.refillProgress = 0;
+      p.filledSegments = Math.min(p.maxSegments, p.filledSegments + 1);
+    }
+    return;
+  }
+
+  // =====================================
+  // ✅ CONTINUOUS MODE (future-friendly)
+  // =====================================
+  if (HEALTH_CONFIG.regenMode === 'continuous') {
+    p.refillProgress += HEALTH_CONFIG.regenPerSecond * dt;
+
+    while (p.refillProgress >= 1 && p.filledSegments < p.maxSegments) {
+      p.refillProgress -= 1;
+      p.filledSegments += 1;
+    }
+
+    if (p.filledSegments >= p.maxSegments) {
+      p.refillProgress = 0;
+    }
+  }
+}
+
+// =====================================================
+// ✅ PLAYER DEATH HANDLER
+// =====================================================
+function handlePlayerDeath() {
+  running = false;
+  isPaused = false;
+
+  playerHealthState.filledSegments = 0;
+  playerHealthState.refillProgress = 0;
+  playerHealthState.regenDelayTimer = 0;
+
+  ui.title.textContent = 'YOU DIED';
+  ui.subtitle.textContent = 'Try again';
+
+  goToMenu();
+}
+
+
+function processDeath(entity, source) {
+ if (!entity) return;
+
+ entity.hp = 0;
+
+ const type = entity.type || 'enemy';
+ const def = ENTITY_DEFS[type];
+
+ // ✅ entity-specific death behavior
+ if (def && typeof def.onDeath === 'function') {
+  def.onDeath(entity);
+ }
+
+ // ✅ removal (IMPORTANT: happens AFTER onDeath logic)
+// ✅ don't remove heavy asteroid immediately
+if (type !== 'heavy_asteroid') {
+ if (def && typeof def.remove === 'function') {
+  def.remove(entity);
+ }
+}
+
+ // ✅ rewards + hooks
+ processRewards(entity);
+ registerKill(type);
+ triggerRelicHook('onKill', entity);
+}
+
+
+
+
+// =====================================
+// ✅ REWARD PIPELINE (NEW)
+// =====================================
+
+function processRewards(entity) {
+ if (!entity) return;
+
+ const type = entity.type || 'enemy';
+ const def = ENTITY_DEFS[type];
+
+ if (def && typeof def.reward === 'function') {
+  def.reward(entity);
+ } else {
+  // fallback safety
+  maybeSpawnGemDropFromSource(entity, type);
+  awardXP(10);
+ }
+}
+
 function applyBulletVelocityBoost(v){ weapon.bonusBulletSpeed += v; }
 
 function applyCapacityBoost(v){
@@ -1611,47 +2518,27 @@ function applyReloadBoost(v){
 // ✅ GENERIC STAT APPLY
 // =====================================
 function applyPerkStat(stat, rarity) {
-  const v = getTunedPerkValue(stat, rarity);
+ const def = STAT_DEFS[stat];
+ if (!def) return;
 
-  if (stat === 'fireRate')   applyFireRateBoost(v);
-  if (stat === 'bulletVel')  applyBulletVelocityBoost(v);
-  if (stat === 'capacity')   applyCapacityBoost(v);
-  if (stat === 'reload')     applyReloadBoost(v);
-  if (stat === 'luck')       playerLuck += v;
-  if (stat === 'pickup')     pickupRadiusBase += v;
+ const v = getTunedPerkValue(stat, rarity);
+
+ def.apply(v);
 }
 
 // =====================================
 // ✅ PERK DESCRIPTION FORMATTER
 // =====================================
 function getPerkDesc(stat, rarity) {
-  const v = getTunedPerkValue(stat, rarity);
+ const def = STAT_DEFS[stat];
+ if (!def) return '';
 
-  if (stat === 'fireRate') {
-    return `+${v.toFixed(2)} Fire Rate`;
-  }
+ const v = getTunedPerkValue(stat, rarity);
 
-  if (stat === 'bulletVel') {
-    return `+${Math.round(v * 60)} m/s Shot Speed`;
-  }
+ const base = def.get();
+ const preview = def.getPreview(base, v);
 
-  if (stat === 'capacity') {
-    return `+${Math.round(v)} Capacity`;
-  }
-
-  if (stat === 'reload') {
-    return `-${(v / 60).toFixed(2)}s Reload`;
-  }
-
-  if (stat === 'luck') {
-    return `+${v.toFixed(2)} Luck`;
-  }
-
-  if (stat === 'pickup') {
-    return `+${Math.round(v)} Pickup Radius`;
-  }
-
-  return '';
+ return `${def.format(preview)} ${def.label}`;
 }
 
 // ---------- ✅ MAIN UPDATE (REAL TIME RELOAD) ----------
@@ -1991,6 +2878,16 @@ function generateRelicChoices(count = 1) {
 }
 
 let availablePerks = [
+
+// =====================================
+// ✅ DAMAGE
+// =====================================
+makePerk({ id:'damage_common', name:'High Caliber', rarity:'common', stat:'damage' }),
+makePerk({ id:'damage_uncommon', name:'High Caliber+', rarity:'uncommon', stat:'damage' }),
+makePerk({ id:'damage_rare', name:'Armor Breaker', rarity:'rare', stat:'damage' }),
+makePerk({ id:'damage_epic', name:'Overcharged Rounds', rarity:'epic', stat:'damage' }),
+makePerk({ id:'damage_legendary', name:'Obliterator Rounds', rarity:'legendary', stat:'damage' }),
+
 
   // =====================================
   // ✅ FIRE RATE
@@ -2498,17 +3395,10 @@ function spawnEnemies(){
     }
   }
 }
-
-function updateEnemies(dt){
-
-  // =====================================
-  // ✅ UPDATE SHARED ROW STATES
-  // =====================================
+function updateEnemyRowStates(dt) {
   enemyRows.forEach(r => {
-
     if (r.state === 'idle') {
       r.idleTimer += dt;
-
       if (r.idleTimer >= r.idleTime) {
         r.state = 'telegraph';
         r.telegraphTimer = 0.25;
@@ -2516,76 +3406,18 @@ function updateEnemies(dt){
         r.idleTimer = 0;
       }
     }
-
     else if (r.state === 'telegraph') {
       r.telegraphTimer -= dt;
-
       if (r.telegraphTimer <= 0) {
         r.state = 'move';
       }
     }
-
     else if (r.state === 'move') {
-      // ✅ after one move, reverse direction for next cycle
       r.direction *= -1;
       r.state = 'idle';
     }
   });
-
-  // =====================================
-  // ✅ APPLY ROW STATE TO EACH ENEMY
-  // =====================================
-  enemies.forEach(e => {
-    if (!e.alive) return;
-
-    const r = enemyRows[e.row];
-
-    // ✅ fall downward
-    e.y += 0.35 * dt * 60;
-
-    // ✅ telegraph phase
-    if (r.state === 'telegraph') {
-      e.telegraphTimer = r.telegraphTimer;
-      e.shiftDir = r.shiftDir;
-      e.willShift = true;
-    }
-
-    // ✅ apply lane move once after telegraph finishes
-    else if (r.state === 'idle' && e.willShift) {
-
-      const minLane = e.homeLane - e.swingRange;
-      const maxLane = e.homeLane + e.swingRange;
-
-      let newLane = e.targetLane + e.shiftDir;
-
-      // ✅ keep motion bounded around home lane
-      if (newLane < minLane || newLane > maxLane) {
-        newLane = e.targetLane;
-      } else {
-        e.targetLane = newLane;
-        e.targetX = GRID_LANES[newLane];
-      }
-
-      e.willShift = false;
-    }
-
-    // ✅ smooth movement toward target lane
-    e.x += (e.targetX - e.x) * Math.min(1, 12 * dt);
-
-    // ✅ reset if offscreen
-    if (e.y > 610) {
-      e.y = 80 + e.row * 70;
-      e.lane = e.homeLane;
-      e.targetLane = e.homeLane;
-      e.x = GRID_LANES[e.homeLane];
-      e.targetX = e.x;
-      e.telegraphTimer = 0;
-      e.willShift = false;
-      e.shiftDir = 0;
-    }
-  });
 }
-
 
 function handleBulletsVsEnemies(){
  for (let bi = bullets.length - 1; bi >= 0; bi--) {
@@ -2595,11 +3427,10 @@ function handleBulletsVsEnemies(){
    const hit = b.x >= (e.x - e.w/2) && b.x <= (e.x + e.w/2) && b.y >= (e.y - e.h/2) && b.y <= (e.y + e.h/2);
    if (hit) {
     if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('enemy hit by tracked bullet id=' + b.id);
-    e.hp = (e.hp ?? 1) - (b.damage ?? 1);
-    applyImpactEffectsFromBullet(b);
-    const keepBullet = !shouldRemoveBulletAfterHit(b, e);
-    if (!keepBullet) bullets.splice(bi, 1);
-    if (e.hp <= 0) { e.hp = 0; e.alive = false; enemies.splice(ei, 1); maybeSpawnGemDropFromSource(e, e.type || 'enemy'); registerKill(entity?.type || 'enemy'); triggerRelicHook('onKill', e); }
+applyDamage(e, b);
+
+const keepBullet = !shouldRemoveBulletAfterHit(b, e);
+if (!keepBullet) bullets.splice(bi, 1);
     break;
    }
   }
@@ -2678,58 +3509,6 @@ function spawnAsteroid(){
   asteroids.push(createAsteroid());
 }
 
-// update + collisions
-function updateAsteroids(dt){
-
-  // ✅ debug spawning only
-  if (mode === 'debug_asteroid') {
-    asteroidSpawnTimer -= dt;
-    if (asteroidSpawnTimer <= 0) {
-      spawnAsteroid();
-      asteroidSpawnTimer = 0.6;
-    }
-  }
-
-  // ✅ NO auto spawn in game mode
-
-  // ✅ movement
-asteroids.forEach(a => {
-
-  // ✅ heavy asteroid breaking phase
-  if (a.type === 'heavy_asteroid' && a.breaking) {
-
-    a.breakTimer -= dt;
-
-    if (a.breakTimer <= 0) {
-      triggerHeavyAsteroidBurst(a);
-      a._destroy = true;
-    }
-
-    return;
-  }
-
-  // ✅ normal movement
-  a.y += a.fall * dt * 60;
-// ✅ rotation update (heavy asteroid only)
-if (a.type === 'heavy_asteroid') {
-  a.rotation += a.spin * dt * 60;
-}
-
-// ✅ fade hit flash
-if (a.hitFlash > 0) {
-  a.hitFlash -= dt * 6;
-  if (a.hitFlash < 0) a.hitFlash = 0;
-}
-
-
-});
-
-  // ✅ cleanup
-  asteroids = asteroids.filter(a => a.y < 640 && !a._destroy);
-
-  handleBulletsVsAsteroids();
-}
-
 function createHeavyAsteroid(config = {}) {
 
   const laneIndex = (
@@ -2781,11 +3560,9 @@ function handleBulletsVsAsteroids(){
     applyImpactEffectsFromBullet(b);
     const keepBullet = !shouldRemoveBulletAfterHit(b, a);
     if (!keepBullet) bullets.splice(bi, 1);
-    if (a.hp <= 0) {
-     if (a.type === 'heavy_asteroid' && !a.breaking) { a.breaking = true; a.breakTimer = a.breakDelay ?? 0.2; break; }
-     asteroids.splice(ai, 1);
-     if (a.type === 'barrier') maybeSpawnGemDropFromSource(a, a.type || 'barrier'); else maybeSpawnGemDropFromSource(a, a.type || 'asteroid');
-    }
+if (a.hp <= 0) {
+ processDeath(a, b);
+}
     break;
    }
   }
@@ -2832,7 +3609,7 @@ function triggerHeavyAsteroidBurst(a){
   // ✅ GEM BURST (tight controlled spread)
   spawnGemBurst(a.x, a.y);
 
-  maybeSpawnGemDropFromSource(a, 'heavy_asteroid_core'); // ✅ gem reward for breaking core
+processRewards({ ...a, type: 'heavy_asteroid_core' });
 }
 
 // =====================================================
@@ -2931,65 +3708,15 @@ function fireDroneMissile(drone) {
   }));
 }
 
-function updateMissileDrones(dt) {
-
-  // -----------------------------------
-  // ✅ update drones
-  // -----------------------------------
-  missileDrones.forEach(d => {
-
-    // fixed hover height
-    d.y = d.hoverY;
-
-    // ✅ lane tracking: tries to stay above player
-    if (d.movementMode === 'lane_track') {
-      d.targetLane = playerLane;
-      const targetX = GRID_LANES[d.targetLane];
-      d.x += (targetX - d.x) * Math.min(1, d.moveSpeed * dt);
-    }
-
-    // ✅ future free-hover variants could go here
-    else if (d.movementMode === 'free_hover') {
-      const targetX = playerX;
-      d.x += (targetX - d.x) * Math.min(1, d.moveSpeed * dt);
-    }
-
-    // ✅ hit flash fade
-    if (d.hitFlash > 0) {
-      d.hitFlash -= dt * 6;
-      if (d.hitFlash < 0) d.hitFlash = 0;
-    }
-
-    // -----------------------------------
-    // ✅ firing state machine
-    // -----------------------------------
-    if (d.telegraphTimer > 0) {
-      d.telegraphTimer -= dt;
-
-      if (d.telegraphTimer <= 0) {
-        fireDroneMissile(d);
-        d.fireTimer = d.fireInterval;
-      }
-    } else {
-      d.fireTimer -= dt;
-
-      if (d.fireTimer <= 0) {
-        d.telegraphTimer = d.telegraphDuration;
-      }
-    }
-  });
-
-  // -----------------------------------
-  // ✅ update missiles
-  // -----------------------------------
+function updateEnemyMissiles(dt) {
   enemyMissiles.forEach(m => {
-
-// ✅ crude hit check with player
-const hit =
-  Math.abs(m.x - playerX) < 12 &&
-  Math.abs(m.y - playerY) < 12;
+    const hit =
+      Math.abs(m.x - playerX) < 12 &&
+      Math.abs(m.y - playerY) < 12;
 
 if (hit) {
+  applyDamageToTarget(playerHealthState, 1, { type: 'missile' });
+
   activeChallenges.forEach(c => {
     if (c.id === 'no_hit') {
       c.failed = true;
@@ -2997,15 +3724,11 @@ if (hit) {
   });
 }
 
-
     m.y += m.fall * dt * 60;
   });
 
   enemyMissiles = enemyMissiles.filter(m => m.y < 640);
-
-  handleBulletsVsMissileDrones();
 }
-
 
 function handleBulletsVsMissileDrones() {
  for (let di = missileDrones.length - 1; di >= 0; di--) {
@@ -3015,23 +3738,12 @@ function handleBulletsVsMissileDrones() {
    const hit = b.x >= (d.x - d.w / 2) && b.x <= (d.x + d.w / 2) && b.y >= (d.y - d.h / 2) && b.y <= (d.y + d.h / 2);
    if (hit) {
     if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('drone hit by tracked bullet id=' + b.id);
-    d.hp -= (b.damage ?? 1);
-    d.hitFlash = 1;
-    applyImpactEffectsFromBullet(b);
-    const keepBullet = !shouldRemoveBulletAfterHit(b, d);
-    if (!keepBullet) bullets.splice(bi, 1);
-if (d.hp <= 0) {
+d.hitFlash = 1;
 
-  d.hp = 0;
+applyDamage(d, b);
 
-  // ✅ ALWAYS do drop FIRST while entity is valid
-  maybeSpawnGemDropFromSource(d, 'missile_drone');
-
-  missileDrones.splice(di, 1);
-
-registerKill(entity?.type || 'enemy');
-  triggerRelicHook('onKill', d);
-}
+const keepBullet = !shouldRemoveBulletAfterHit(b, d);
+if (!keepBullet) bullets.splice(bi, 1);
     break;
    }
   }
@@ -3223,43 +3935,6 @@ function trySpawnPawnGemDrop(pawn) {
  return maybeSpawnGemDropFromSource(pawn, 'pawn');
 }
 
-function updatePawns(dt) {
-  pawns.forEach(p => {
-
-if (p.dead) {
-  p.deathTimer -= dt;
-
-  if (p.deathTimer <= 0) {
-    pawns.splice(pawns.indexOf(p), 1);
-  }
-
-  return;
-}
-
-    // ✅ straight downward movement only
-    p.y += p.fall * dt * 60;
-
-    if (p.hitFlash > 0) {
-      p.hitFlash -= dt * 6;
-      if (p.hitFlash < 0) p.hitFlash = 0;
-    }
-
-    // ✅ future variant hooks
-    if (p.variant === 'missile_drop') {
-      // reserved for future
-    }
-
-    if (p.variant === 'dive_bomb') {
-      // reserved for future
-    }
-  });
-
-  // ✅ cleanup if offscreen
-  pawns = pawns.filter(p => p.y < 640);
-
-  handleBulletsVsPawns();
-}
-
 
 function handleBulletsVsPawns() {
  for (let pi = pawns.length - 1; pi >= 0; pi--) {
@@ -3269,19 +3944,13 @@ function handleBulletsVsPawns() {
    const hit = b.x >= (p.x - p.w / 2) && b.x <= (p.x + p.w / 2) && b.y >= (p.y - p.h / 2) && b.y <= (p.y + p.h / 2);
    if (hit) {
     if (b.id === lastChamberDebug.lastBulletId) lcDebugLog('pawn hit by tracked bullet id=' + b.id);
-    p.hp -= (b.damage ?? 1);
-    p.hitFlash = 1;
-    applyImpactEffectsFromBullet(b);
-    const keepBullet = !shouldRemoveBulletAfterHit(b, p);
-    if (!keepBullet) bullets.splice(bi, 1);
-if (p.hp <= 0 && !p.dead) {
-  p.dead = true;
-  p.deathTimer = 0.2;
+p.hitFlash = 1;
 
-  trySpawnPawnGemDrop(p);
-  registerKill('pawn');
-  triggerRelicHook('onKill', p);
-}
+applyDamage(p, b);
+
+const keepBullet = !shouldRemoveBulletAfterHit(b, p);
+if (!keepBullet) bullets.splice(bi, 1);
+
     break;
    }
   }
@@ -3338,6 +4007,29 @@ function computeHPFromPower(value, type){
 }
 
 // ✅ CREATE FUNCTIONS (THESE WERE MISSING — CAUSED CRASH)
+
+function createStatPowerUp(stat) {
+ const def = STAT_DEFS[stat];
+ if (!def || !def.powerUp) return null;
+
+ const value = def.powerUp.getValue();
+
+ return {
+  type: 'stat',
+  stat: stat,
+
+  x: getRandomLaneX(),
+  y: -20,
+
+  w: 34,
+  h: 24,
+
+  hp: computeHPFromPower(value, 'stat_' + stat),
+
+  power: value,
+  fall: randRange(powerUpSpeedRange.min, powerUpSpeedRange.max)
+ };
+}
 
 function createFireRatePower(){
   const v = randRange(fireRatePowerRange.min, fireRatePowerRange.max);
@@ -3450,17 +4142,12 @@ if (
   // ✅ NORMAL GAME RANDOM
   // =========================
 
-  const r = Math.random();
+const statKeys = Object.keys(STAT_DEFS).filter(s => STAT_DEFS[s].powerUp);
 
-  if (r < 0.25) {
-    powerUps.push(createFireRatePower());
-  } else if (r < 0.5) {
-    powerUps.push(createBulletVelPower());
-  } else if (r < 0.75) {
-    powerUps.push(createCapacityPower());
-  } else {
-    powerUps.push(createReloadPower());
-  }
+const stat = statKeys[Math.floor(Math.random() * statKeys.length)];
+
+const p = createStatPowerUp(stat);
+if (p) powerUps.push(p);
 }
 
 // ✅ UPDATE
@@ -3499,13 +4186,14 @@ function handleBulletsVsPowerUps(){
 
 
 function grantPowerUp(p){
+ if (p.type === 'stat') {
+  const def = STAT_DEFS[p.stat];
+  if (def) {
+   def.apply(p.power);
+  }
+ }
 
-  if (p.type === 'stat_fireRate')   applyFireRateBoost(p.power);
-  if (p.type === 'stat_bulletVel')  applyBulletVelocityBoost(p.power);
-  if (p.type === 'stat_capacity')   applyCapacityBoost(p.power);
-  if (p.type === 'stat_reload')     applyReloadBoost(p.power);
-
-awardXP(25); // suggested: powerups give less XP than score value, tune as desired
+ awardXP(25);
 }
 
 
@@ -4987,95 +5675,24 @@ for (let i = 0; i < a.hp; i++) {
 // -----------------------------------
 // ✅ MISSILE DRONES
 // -----------------------------------
+// -----------------------------------
+// ✅ MISSILE DRONES
+// -----------------------------------
 missileDrones.forEach(d => {
-  ctx.save();
-
-  const telegraphing = d.telegraphTimer > 0;
-  const flash = telegraphing
-    ? (0.6 + Math.sin(performance.now() * 0.03) * 0.4)
-    : 0;
-
-  // main body
-  let bodyR = 120 + d.hitFlash * 100;
-  let bodyG = 180 + d.hitFlash * 60;
-  let bodyB = 255;
-
-  if (bodyR > 255) bodyR = 255;
-  if (bodyG > 255) bodyG = 255;
-
-  ctx.fillStyle = `rgba(${bodyR},${bodyG},${bodyB},0.95)`;
-
-  ctx.beginPath();
-  ctx.moveTo(d.x, d.y - d.h / 2);
-  ctx.lineTo(d.x + d.w / 2, d.y);
-  ctx.lineTo(d.x, d.y + d.h / 2);
-  ctx.lineTo(d.x - d.w / 2, d.y);
-  ctx.closePath();
-  ctx.fill();
-
-  // telegraph glow
-  if (telegraphing) {
-    ctx.strokeStyle = `rgba(255,80,80,${flash})`;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(d.x - d.w / 2 - 3, d.y - d.h / 2 - 3, d.w + 6, d.h + 6);
+  const def = ENTITY_DEFS[d.type || 'missile_drone'];
+  if (def && typeof def.render === 'function') {
+    def.render(d, ctx);
   }
-
-  // HP pips
-  const pipSize = 3;
-  const pipGap = 2;
-
-  ctx.fillStyle = '#ffffff';
-  for (let i = 0; i < d.hp; i++) {
-    ctx.fillRect(
-      d.x - ((d.hp * (pipSize + pipGap) - pipGap) / 2) + i * (pipSize + pipGap),
-      d.y + d.h / 2 + 4,
-      pipSize,
-      pipSize
-    );
-  }
-
-  ctx.restore();
 });
 
 // -----------------------------------
 // ✅ PAWNS
 // -----------------------------------
 pawns.forEach(p => {
-  ctx.save();
-
-  const flash = p.hitFlash;
-
-  let bodyR = 255;
-  let bodyG = 120 + flash * 100;
-  let bodyB = 120 + flash * 100;
-
-  if (bodyG > 255) bodyG = 255;
-  if (bodyB > 255) bodyB = 255;
-
-  ctx.fillStyle = `rgba(${bodyR},${bodyG},${bodyB},0.95)`;
-
-  // ✅ medium square-ish body
-  ctx.fillRect(p.x - p.w / 2, p.y - p.h / 2, p.w, p.h);
-
-  // ✅ inner core
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillRect(p.x - 5, p.y - 5, 10, 10);
-
-  // ✅ HP pips
-  const pipSize = 3;
-  const pipGap = 2;
-
-  ctx.fillStyle = '#ffffff';
-  for (let i = 0; i < p.hp; i++) {
-    ctx.fillRect(
-      p.x - ((p.hp * (pipSize + pipGap) - pipGap) / 2) + i * (pipSize + pipGap),
-      p.y + p.h / 2 + 4,
-      pipSize,
-      pipSize
-    );
+  const def = ENTITY_DEFS[p.type || 'pawn'];
+  if (def && typeof def.render === 'function') {
+    def.render(p, ctx);
   }
-
-  ctx.restore();
 });
 
 
@@ -5097,67 +5714,17 @@ enemyMissiles.forEach(m => {
 
 
 
-  // ENEMIES
+// -----------------------------------
+// ✅ ENEMIES
+// -----------------------------------
 enemies.forEach(e => {
-  if (!e.alive) return;
-
-  ctx.save();
-
-  const dx = e.targetX - e.x;
-
-  // ✅ position
-  ctx.translate(e.x, e.y);
-
-  // ✅ tilt
-  ctx.rotate(dx * 0.01);
-
-  // ✅ TELEGRAPH SCALE
-  if (e.telegraphTimer > 0) {
-    const pulse = 1 + Math.sin(performance.now() * 0.02) * 0.2;
-    ctx.scale(pulse, pulse);
-    ctx.fillStyle = '#ff8888';
-  } else {
-    ctx.fillStyle = '#ff3355';
-  }
-
-  // ✅ DRAW ENEMY BODY
-  ctx.fillRect(-e.w/2, -e.h/2, e.w, e.h);
-
-  // ✅ ✅ ✅ DRAW DIRECTION ARROW
-  if (e.telegraphTimer > 0 && e.willShift) {
-
-    ctx.save();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.globalAlpha = 0.9;
-
-    const offsetY = -18; // above enemy
-
-    // 👉 LEFT ARROW
-    if (e.shiftDir === -1) {
-      ctx.beginPath();
-      ctx.moveTo(-6, offsetY);
-      ctx.lineTo(6, offsetY - 6);
-      ctx.lineTo(6, offsetY + 6);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // 👉 RIGHT ARROW
-    else if (e.shiftDir === 1) {
-      ctx.beginPath();
-      ctx.moveTo(6, offsetY);
-      ctx.lineTo(-6, offsetY - 6);
-      ctx.lineTo(-6, offsetY + 6);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    ctx.restore();
-  }
-
-  ctx.restore();
+ const def = ENTITY_DEFS[e.type || 'enemy'];
+ if (def && typeof def.render === 'function') {
+  def.render(e, ctx);
+ }
 });
+
+
 
 // -------- PICKUPS (GEMS) --------
 pickups.forEach(p => {
@@ -5259,23 +5826,16 @@ xpTexts.forEach(t => {
       ctx.strokeRect(p.x - p.w/2 - 2, p.y - p.h/2 - 2, p.w + 4, p.h + 4);
     }
 
-    let labelTop = "";
-    let labelBottom = "";
+let labelTop = "";
+let labelBottom = "";
 
-    if (p.type === 'stat_fireRate') {
-      labelTop = "FR";
-      labelBottom = "+" + Math.round(p.power);
-    } else if (p.type === 'stat_bulletVel') {
-      labelTop = "BV";
-      labelBottom = "+" + Number(p.power).toFixed(1);
-    } else if (p.type === 'stat_capacity') {
-      labelTop = "CP";
-      labelBottom = "+" + Math.round(p.power);
-    } else if (p.type === 'stat_reload') {
-      labelTop = "RL";
-      labelBottom = "-" + Math.round(p.power);
-    }
-
+if (p.type === 'stat') {
+ const def = STAT_DEFS[p.stat];
+ if (def && def.powerUp) {
+  labelTop = def.powerUp.label;
+  labelBottom = def.powerUp.formatValue(p.power);
+ }
+}
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#000';
     ctx.font = '10px monospace';
@@ -5493,10 +6053,8 @@ function resetFullRunProgress() {
   score = 0;
   logicLevel = 1;
   levelXP = 0;
-
   displayLevel = 1;
   displayXP = 0;
-
   xpBarState = 'normal';
   xpFlashTimer = 0;
   pendingDisplayLevels = 0;
@@ -5508,9 +6066,12 @@ function resetFullRunProgress() {
   novaShards = 0;
   playerRelicState.shotCounter = 0;
   playerRelicState.pierceBonus = 0;
+  playerRelicState.boomerangToggle = 0;
 
   ui.score.textContent = score;
-  initWeaponState();   // ✅ reset player stats ONLY between runs
+
+  initWeaponState();
+
 }
 
 
@@ -5532,6 +6093,15 @@ pawns = [];
 }
 
 function setMode(nextMode){
+UI_STATE.mode = nextMode;
+
+// ✅ reset all flags
+UI_STATE.panelVisible = false;
+UI_STATE.hudVisible = false;
+UI_STATE.perkUIVisible = false;
+UI_STATE.debugVisible = false;
+UI_STATE.mapVisible = false;
+
 clearStatHighlights();
   mode = nextMode;
 // ✅ reset gameplay visibility when leaving perk mode
@@ -5574,19 +6144,11 @@ if (nextMode === 'relic_replace') {
   return;
 }
 
-  // ✅ HUD visibility: show stats during pause + perk screen, hide otherwise
-if (nextMode === 'paused') {
-  ui.hud.classList.remove('hidden');
-  ui.hud.style.top = '40px';
-}
-else if (nextMode === 'perk_select') {
-  // ✅ hide initially, will reveal later
-  ui.hud.classList.add('hidden');
-  ui.hud.style.top = '40px';
-}
-else {
-  ui.hud.classList.add('hidden');
-  ui.hud.style.top = '0px';
+// ✅ HUD position only (visibility now handled by UI_STATE)
+if (nextMode === 'paused' || nextMode === 'perk_select') {
+ ui.hud.style.top = '40px';
+} else {
+ ui.hud.style.top = '0px';
 }
 
   // hide all rows by default
@@ -5611,21 +6173,41 @@ document.getElementById('subtitle').classList.add('hideInPerk');
 
 
   // ----- MODE ROUTES -----
-  if (nextMode === 'map') {
-    ui.panel.classList.add('hidden'); // UI foundation: panel separate layer
-    if (ui.mapNodePanel) { ui.mapNodePanel.style.display = 'flex'; ui.mapNodePanel.style.visibility='visible'; ui.mapNodePanel.style.opacity='1'; renderMapNodePreview(); }
-    return;
-  }
+if (nextMode === 'map') {
 
-  if (nextMode === 'menu') {
-    ui.panel.classList.remove('hidden');
-    ui.menuRow.classList.remove('hidden');
-    ui.btnStart.focus();
-    setTimeout(ensureFocus, 0);
-    return;
-  }
+ UI_STATE.mapVisible = true; // ✅ already added earlier
+
+ ui.panel.classList.add('hidden');
+
+ if (ui.mapNodePanel) { 
+   ui.mapNodePanel.style.display = 'flex'; 
+   renderMapNodePreview(); 
+ }
+
+if (!UI_STATE.pendingUIReveal) {
+  renderUI();
+}
+ return;
+}
+
+if (nextMode === 'menu') {
+
+ UI_STATE.panelVisible = true;
+
+ ui.panel.classList.remove('hidden');
+ ui.menuRow.classList.remove('hidden');
+ ui.btnStart.focus();
+ setTimeout(ensureFocus, 0);
+
+ if (!UI_STATE.pendingUIReveal) {
+  renderUI();
+} // ✅ ADD HERE
+ return;
+}
 
 if (nextMode === 'debugMenu') {
+UI_STATE.panelVisible = true;
+UI_STATE.debugVisible = true;
  buildDebugRelicDropdown();
  renderDebugRelicChosen();
   ui.panel.classList.remove('hidden');
@@ -5635,19 +6217,37 @@ if (nextMode === 'debugMenu') {
 
   ui.debugLevelSelect.focus();
   setTimeout(ensureFocus, 0);
+ if (!UI_STATE.pendingUIReveal) {
+  renderUI();
+} // ✅ ADD HERE
   return;
 }
 
   if (nextMode === 'paused') {
+UI_STATE.panelVisible = true;
+UI_STATE.hudVisible = true;
     ui.panel.classList.remove('hidden');
     ui.pauseRow.classList.remove('hidden');
     if (ui.relicPanel) { ui.relicPanel.classList.remove('hidden'); renderRelicPanel(); }
     ui.btnResume.focus();
     setTimeout(ensureFocus, 0);
+ if (!UI_STATE.pendingUIReveal) {
+  renderUI();
+} // ✅ ADD HERE
     return;
   }
 
 if (nextMode === 'perk_select') {
+// ✅ start transition instead of showing immediately
+UI_STATE.panelVisible = false;
+UI_STATE.perkUIVisible = false;
+UI_STATE.hudVisible = false;
+
+
+UI_STATE.transition = 'perk_enter';
+UI_STATE.transitionTimer = 0;
+
+UI_STATE.pendingUIReveal = true;
   // ✅ reset perk reveal timeline
   perkTimeline = 0;
   perkWarpRamp = 0;
@@ -5664,16 +6264,22 @@ if (nextMode === 'perk_select') {
   // ✅ hide the whole panel at first
   ui.panel.classList.add('hidden'); // UI foundation: panel separate layer
 
-  // ✅ hide perk UI at first — warp comes first
-  ui.perkRow.classList.add('hidden');
-  ui.btnReroll.classList.add('hidden');
 
   return;
 }
 
-  // all other modes (game/debug_*): hide panel
-  ui.panel.classList.add('hidden'); // UI foundation: panel separate layer
+// ✅ gameplay: HUD should be hidden
+UI_STATE.hudVisible = false;
+
+// all other modes (game/debug_*): hide panel
+ui.panel.classList.add('hidden');
+
+if (!UI_STATE.pendingUIReveal) {
+  renderUI();
 }
+}
+
+
 function goToMenu(){
  activeChallenges=[];
   running = false;
@@ -6393,7 +6999,7 @@ const LEVELS = {
 a_debug_pawn_test: {
   type: 'elite',
   objective: 'survive_timer',
-  duration: 10,
+  duration: 25,
 //120
 
   setup: () => {
@@ -6455,7 +7061,7 @@ spawnRules: [
 {
   type: 'missile_drone',
 
-  startDelay: 60,   // ✅ kicks in late game
+  startDelay: 6,   // ✅ kicks in late game 60
 
   min: 6,
   max: 10,
@@ -6775,10 +7381,54 @@ function update(now){
 
     // ✅ movement always ticks
     updateMovement(dt);
+// ✅ PLAYER HEALTH UPDATE
+updatePlayerHealth(dt);
 triggerRelicHook('whileActive', dt);
 
     // ✅ perk timeline progress
     if (mode === 'perk_select') {
+// =====================================
+// ✅ UI TRANSITION SYSTEM
+// =====================================
+if (UI_STATE.transition === 'perk_enter') {
+  UI_STATE.transitionTimer += dt;
+
+  // ✅ match this to your flash timing
+if (UI_STATE.transitionTimer > 0.65) {
+
+if (UI_STATE.pendingUIReveal) {
+
+  UI_STATE.panelVisible = true;
+
+  if (UI_STATE.mode === 'perk_select') {
+    UI_STATE.perkUIVisible = true;
+    UI_STATE.hudVisible = true;
+
+    renderPerkUI();
+  }
+
+  UI_STATE.pendingUIReveal = false;
+}
+
+UI_STATE.transition = null;
+UI_STATE.transitionTimer = 0;
+
+if (!UI_STATE.pendingUIReveal) {
+  renderUI();
+}
+
+  // ✅ NEW: restore focus AFTER UI is visible
+setTimeout(() => {
+  if (ui.perk2) {
+    ui.perk2.focus();
+  }
+  ensureFocus();
+}, 0);
+}
+
+
+}
+
       perkTimeline += dt;
     }
 
@@ -6818,19 +7468,6 @@ updateMapCursor(dt);
         flashPhase = 1;
       }
 
-      if (!uiRevealed && flashValue >= FLASH_MAX) {
-        uiRevealed = true;
-        gameplayHiddenForPerk = true;
-
-        ui.panel.classList.remove('hidden');
-        ui.perkRow.classList.remove('hidden');
-        ui.btnReroll.classList.remove('hidden');
-        ui.hud.classList.remove('hidden');
-
-        renderPerkUI();
-        ui.perk2.focus();
-        setTimeout(ensureFocus, 0);
-      }
     }
 
     // =====================================
@@ -6889,19 +7526,11 @@ if (activeLevelDef && typeof activeLevelDef.update === 'function') {
 }
 
 updateWeapons(dt);
-updateMissileDrones(dt);
-updatePawns(dt);
-
-  // ✅ ENEMIES ONLY
-  if (mode === 'game' || mode === 'debug_enemy') {
-    updateEnemies(dt);
-    handleBulletsVsEnemies();
-  }
-
-  // ✅ ASTEROIDS ONLY
-  if (mode === 'game' || mode === 'debug_asteroid') {
-    updateAsteroids(dt);
-  }
+updateEnemyRowStates(dt);
+updateEntities(dt);
+updateEnemyMissiles(dt);
+handleEntityCollisions();
+cleanupEntities();
 
   // ✅ POWERUPS ONLY
   if (
@@ -7022,34 +7651,109 @@ ui.btnLevelContinue.onclick = () => {
 
 
 function renderTopUI() {
-
   if (!ui.topUI) return;
 
+  // =====================================
+  // ✅ XP BAR (TOP)
+  // =====================================
   const xpRequired = getXPRequiredFor(displayLevel);
-  const progress = (xpRequired > 0) ? (displayXP / xpRequired) : 0;
-
-  const barColor =
+  const xpProgress = (xpRequired > 0) ? (displayXP / xpRequired) : 0;
+  const xpBarColor =
     (xpBarState === 'flash' || mode === 'perk_select')
       ? '#ffd400'
       : '#00d4ff';
 
+  // =====================================
+  // ✅ HEALTH BAR (BOTTOM)
+  // =====================================
+  const p = playerHealthState;
+  const cfg = HEALTH_CONFIG;
+
+  const segmentCount = Math.max(1, p.maxSegments);
+  const dividerCount = Math.max(0, segmentCount - 1);
+
+  const innerWidth =
+    (segmentCount * cfg.segmentWidth) +
+    (dividerCount * cfg.segmentDividerWidth);
+
+  const outerWidth = innerWidth + (cfg.barPadding * 2);
+  const outerHeight = cfg.segmentHeight + (cfg.barPadding * 2);
+
+  const left = Math.round((600 - outerWidth) / 2);
+  const top = Math.round(600 - cfg.barBottomOffset - outerHeight);
+
+  // build health HTML pieces
+  let healthSegmentsHTML = '';
+  for (let i = 0; i < segmentCount; i++) {
+    const isLocked = i < p.filledSegments;
+    const isRegenSegment = (i === p.filledSegments) && (p.refillProgress > 0) && (p.filledSegments < p.maxSegments);
+
+    // width of refill inside next segment
+    let regenWidth = 0;
+    if (isRegenSegment) {
+      regenWidth = Math.max(0, Math.min(cfg.segmentWidth, Math.round(cfg.segmentWidth * p.refillProgress)));
+    }
+
+    healthSegmentsHTML += `
+      <div style="
+        position:relative;
+        width:${cfg.segmentWidth}px;
+        height:${cfg.segmentHeight}px;
+        background:${cfg.colorBack};
+        overflow:hidden;
+        flex:0 0 auto;
+      ">
+        ${isLocked ? `
+          <div style="
+            position:absolute;
+            left:0;
+            top:0;
+            width:100%;
+            height:100%;
+            background:${cfg.colorFull};
+          "></div>
+        ` : ''}
+
+        ${(!isLocked && isRegenSegment) ? `
+          <div style="
+            position:absolute;
+            left:0;
+            top:0;
+            width:${regenWidth}px;
+            height:100%;
+            background:${cfg.colorRegen};
+          "></div>
+        ` : ''}
+      </div>
+    `;
+
+    if (i < segmentCount - 1) {
+      healthSegmentsHTML += `
+        <div style="
+          width:${cfg.segmentDividerWidth}px;
+          height:${cfg.segmentHeight}px;
+          background:${cfg.colorDivider};
+          flex:0 0 auto;
+        "></div>
+      `;
+    }
+  }
+
   ui.topUI.innerHTML = `
     <div style="position:fixed; top:0; left:0; width:100%;">
 
-      <!-- BAR BACKGROUND -->
+      <!-- XP BAR BACKGROUND -->
       <div style="
         height:10px;
         background: rgba(255,255,255,0.15);
         position: relative;
       ">
-
-        <!-- BAR FILL -->
+        <!-- XP BAR FILL -->
         <div style="
           height:100%;
-          width:${Math.max(0, Math.min(1, progress)) * 100}%;
-          background:${barColor};
+          width:${Math.max(0, Math.min(1, xpProgress)) * 100}%;
+          background:${xpBarColor};
         "></div>
-
       </div>
 
       <!-- LEVEL TEXT -->
@@ -7077,6 +7781,30 @@ function renderTopUI() {
         </div>
       ` : ''}
 
+      <!-- HEALTH BAR -->
+      <div style="
+        position:fixed;
+        left:${left}px;
+        top:${top}px;
+        width:${outerWidth}px;
+        height:${outerHeight}px;
+        border:1px solid ${cfg.colorBorder};
+        background:rgba(0,0,0,0.55);
+        border-radius:4px;
+        padding:${cfg.barPadding}px;
+        box-sizing:border-box;
+        box-shadow: 0 0 10px rgba(255,51,85,0.18);
+      ">
+        <div style="
+          display:flex;
+          align-items:center;
+          width:${innerWidth}px;
+          height:${cfg.segmentHeight}px;
+          gap:0;
+        ">
+          ${healthSegmentsHTML}
+        </div>
+      </div>
     </div>
   `;
 }
